@@ -150,8 +150,9 @@
   <section id="browser" hidden></section>
 </main>
 
-<script>
-const ITEM = 'https://archive.org/download/drum-machines-collection/';
+<script type="module">
+import { sampleUrl, createEngine, makeStore, PRESETS, STEPS, NEXT } from './engine.js';
+
 const CAT_NAMES = { k: 'Kick', s: 'Snare', c: 'Clap', r: 'Rim', h: 'Closed hat', o: 'Open hat', t: 'Tom', y: 'Cymbal', p: 'Perc / other' };
 const CAT_ORDER = 'kschotyrp';
 
@@ -168,77 +169,54 @@ const SLOTS = ROWS.flat();
 // Where a slot looks when its own category has run out
 const FALLBACK = { k: 'p', s: 'rcp', c: 'rsp', r: 'csp', h: 'op', o: 'hyp', t: 'p', y: 'op', p: 'tyrc' };
 
-const store = {
-  get(k) { try { return JSON.parse(localStorage.getItem('drum.' + k)); } catch { return null; } },
-  set(k, v) { try { localStorage.setItem('drum.' + k, JSON.stringify(v)); } catch {} },
-};
+// Sequencer lanes play keys, not samples, so a beat follows whatever kit is loaded.
+// Order matters: closed hat is scheduled before open hat within a step.
+const LANES = [
+  ['kick', 'Kick', 'KeyZ'], ['snare', 'Snare', 'KeyB'], ['clap', 'Clap', 'Comma'], ['rim', 'Rim', 'Period'],
+  ['chh', 'Closed hat', 'KeyA'], ['ohh', 'Open hat', 'KeyG'], ['tom1', 'Tom 1', 'KeyQ'], ['tom2', 'Tom 2', 'KeyW'],
+  ['tom3', 'Tom 3', 'KeyE'], ['cym', 'Cymbal', 'Digit1'], ['perc1', 'Perc 1', 'KeyJ'], ['perc2', 'Perc 2', 'KeyK'],
+];
 
+const store = makeStore('drum.');
 let kits = [], kit = null, map = {}, selected = null;
-let ctx, master;
-const buffers = new Map();   // url -> Promise<AudioBuffer>
-const ready = new Map();     // url -> AudioBuffer, once decoded (the sequencer only plays these)
-const openHats = new Set();  // live voices that a closed hat should choke
+const laneKeys = { ...Object.fromEntries(LANES.map(([id, , code]) => [id, code])), ...store.get('laneKeys') };
+let binding = null;          // lane waiting for a key press
+let shownStep = -1;
+let cells = [];              // cells[step] -> elements in that column
 
 const $ = (id) => document.getElementById(id);
-const urlFor = (k, file) => ITEM + encodeURIComponent(k.zip) + '/' + encodeURIComponent(k.root + file);
+const urlFor = (k, file) => sampleUrl(k.zip, k.root + file);
 const short = (file) => file.split('/').pop().replace(/\.(wav|aiff?)$/i, '');
 const catOf = (k, file) => k.cats[k.files.indexOf(file)] || 'p';
 
-// ---------- audio ----------
-function audio() {
-  if (!ctx) {
-    ctx = new AudioContext({ latencyHint: 'interactive' });
-    master = ctx.createGain();
-    master.gain.value = +$('vol').value;
-    master.connect(ctx.destination);
-  }
-  if (ctx.state === 'suspended') ctx.resume();
-  return ctx;
-}
+const engine = createEngine({
+  lanes: LANES.map(([id]) => id),
+  store,
+  resolve(id) {
+    const file = kit && map[laneKeys[id]];
+    return file ? { url: urlFor(kit, file), cat: catOf(kit, file) } : null;
+  },
+  onChange() {
+    if (!engine.playing) {
+      for (const c of cells[shownStep] || []) c.classList.remove('now');
+      shownStep = -1;
+      delete $('rec').dataset.counting;
+    }
+    renderTransport();
+    renderGrid();
+  },
+  onDraw({ i, hits, count }) {
+    if (count) { $('rec').textContent = '● ' + count; $('rec').dataset.counting = 1; return; }
+    if ($('rec').dataset.counting) { delete $('rec').dataset.counting; renderTransport(); }
+    for (const c of cells[shownStep] || []) c.classList.remove('now');
+    for (const c of cells[i]) c.classList.add('now');
+    shownStep = i;
+    for (const id of hits) flash(laneKeys[id]);
+  },
+});
+window.engine = engine; // handy from the console
 
-function load(url) {
-  if (!buffers.has(url)) {
-    const p = fetch(url)
-      .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-      .then((data) => audio().decodeAudioData(data))
-      .then((buf) => { ready.set(url, buf); return buf; });
-    p.catch(() => buffers.delete(url)); // allow a retry later
-    buffers.set(url, p);
-  }
-  return buffers.get(url);
-}
-
-// Start one sample at audio time `when` (now if omitted). A closed hat chokes
-// any open hat that has already started by then.
-function voice(buf, cat, level, when = 0) {
-  const ac = audio();
-  const t = Math.max(when, ac.currentTime);
-  if (cat === 'h') for (const v of openHats) v.choke(t);
-
-  const src = ac.createBufferSource();
-  const gain = ac.createGain();
-  src.buffer = buf;
-  gain.gain.value = level;
-  src.connect(gain).connect(master);
-  src.start(t);
-  if (cat === 'o') {
-    const v = { start: t, choke(at) {
-      if (at < v.start) return;
-      gain.gain.setValueAtTime(level, at);
-      gain.gain.linearRampToValueAtTime(0, at + 0.01);
-      src.stop(at + 0.02);
-      openHats.delete(v);
-    } };
-    openHats.add(v);
-    src.onended = () => openHats.delete(v);
-  }
-}
-
-async function play(file, level) {
-  let buf;
-  try { buf = await load(urlFor(kit, file)); } catch { return; }
-  voice(buf, catOf(kit, file), level);
-}
+const play = (file, level) => engine.play(urlFor(kit, file), catOf(kit, file), level);
 
 // ---------- mapping ----------
 function autoMap(k) {
@@ -282,7 +260,7 @@ function saveMap() {
   store.set('map.' + kit.name, Object.keys(diff).length ? diff : null);
 }
 
-// ---------- UI ----------
+// ---------- pads ----------
 const pads = {};
 function buildBoard() {
   const board = $('board');
@@ -296,8 +274,8 @@ function buildBoard() {
       pad.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         trigger(code, e.shiftKey);
-        if (binding) { laneKeys[binding] = code; store.set('laneKeys', laneKeys); binding = null; renderGrid(); return; }
-        if (recording && playing) { recordHit(code, e.shiftKey); return; }
+        if (binding) { bindLane(code); return; }
+        if (engine.recording && engine.playing) { recordKey(code, e.shiftKey); return; }
         select(code);
       });
       pads[code] = pad;
@@ -317,9 +295,8 @@ function renderPads() {
     pad.querySelector('small').textContent = file ? short(file) : '';
     pad.title = file || '';
     if (!file) continue;
-    const url = urlFor(kit, file);
     pad.classList.add('loading');
-    load(url).then(
+    engine.load(urlFor(kit, file)).then(
       () => { if (map[code] === file) pad.classList.remove('loading'); },
       () => { if (map[code] === file) { pad.classList.remove('loading'); pad.classList.add('error'); pad.querySelector('small').textContent = 'can’t play'; } },
     );
@@ -336,6 +313,7 @@ function trigger(code, accent) {
 
 function flash(code) {
   const pad = pads[code];
+  if (!pad) return;
   pad.classList.add('hit');
   clearTimeout(pad._t);
   pad._t = setTimeout(() => pad.classList.remove('hit'), 90);
@@ -393,6 +371,7 @@ function cycle(dir) {
   assign(pool[(i + dir + pool.length) % pool.length]);
 }
 
+// ---------- kits ----------
 function renderKitList() {
   const q = $('search').value.trim().toLowerCase();
   const ul = $('kits');
@@ -412,7 +391,7 @@ function setKit(k) {
   if (kit?.li) kit.li.className = '';
   kit = k;
   map = { ...autoMap(k), ...(store.get('map.' + k.name) || {}) };
-  if (ctx) for (const v of openHats) v.choke(ctx.currentTime);
+  engine.chokeAll();
   store.set('kit', k.name);
   $('kitName').textContent = k.name;
   const counts = {};
@@ -432,156 +411,40 @@ function stepKit(dir) {
   setKit(list[(i + dir + list.length) % list.length]);
 }
 
-// ---------- sequencer ----------
-// Lanes play keys, not samples, so a beat follows whatever kit is loaded.
-// Order matters: closed hat is scheduled before open hat within a step.
-const LANES = [
-  ['kick', 'Kick', 'KeyZ'], ['snare', 'Snare', 'KeyB'], ['clap', 'Clap', 'Comma'], ['rim', 'Rim', 'Period'],
-  ['chh', 'Closed hat', 'KeyA'], ['ohh', 'Open hat', 'KeyG'], ['tom1', 'Tom 1', 'KeyQ'], ['tom2', 'Tom 2', 'KeyW'],
-  ['tom3', 'Tom 3', 'KeyE'], ['cym', 'Cymbal', 'Digit1'], ['perc1', 'Perc 1', 'KeyJ'], ['perc2', 'Perc 2', 'KeyK'],
-];
-const STEPS = 16;
-const LEVEL = { g: 0.3, x: 0.7, X: 1 };   // ghost, hit, accent
-const NEXT = { '.': 'x', x: 'X', X: 'g', g: '.' };
-
-// Classic patterns, one bar of 16ths. x hit, X accent, g ghost, . rest
-const PRESETS = [
-  { name: 'Rock', bpm: 110, swing: 50, lanes: {
-    kick: 'X.......x.x.....', snare: '....X.......X...', chh: 'x.x.x.x.x.x.x.x.', cym: 'x...............' } },
-  { name: 'Disco', bpm: 118, swing: 50, lanes: {
-    kick: 'X...X...X...X...', snare: '....x.......x...', chh: 'xx.xxx.xxx.xxx.x', ohh: '..x...x...x...x.' } },
-  { name: 'House', bpm: 124, swing: 52, lanes: {
-    kick: 'X...X...X...X...', clap: '....x.......x...', ohh: '..x...x...x...x.', perc2: 'g.g.g.g.g.g.g.g.' } },
-  { name: 'Techno', bpm: 132, swing: 50, lanes: {
-    kick: 'X...X...X...X...', clap: '....x.......x...', chh: 'gg.ggg.ggg.ggg.g', ohh: '..x...x...x...x.', rim: '...x.....x..x...' } },
-  { name: 'Electro', bpm: 126, swing: 50, lanes: {
-    kick: 'X.....x.....x...', clap: '....X.......X...', chh: 'x.x.x.x.x.x.x.x.', perc2: 'x..x..x...x..x..' } },
-  { name: 'Miami bass', bpm: 132, swing: 50, lanes: {
-    kick: 'X......x..X.....', clap: '....X.......X...', chh: 'xgxgxgxgxgxgxgxg', tom1: '..............x.' } },
-  { name: 'Boom bap', bpm: 90, swing: 58, lanes: {
-    kick: 'X......x..x.....', snare: '....X.......X...', chh: 'x.x.x.x.x.x.x.x.', ohh: '..............x.' } },
-  { name: 'Funk', bpm: 100, swing: 54, lanes: {
-    kick: 'X.x.......x..x..', snare: '....X..g.g..X..g', chh: 'xxxxxxx.xxxxx.xx', ohh: '.......x.....x..' } },
-  { name: 'Breakbeat', bpm: 136, swing: 50, lanes: {
-    kick: 'X.x.......xx....', snare: '....X..g.g..X..g', cym: 'x.x.x.x.x.x.x.x.' } },
-  { name: 'New jack swing', bpm: 104, swing: 62, lanes: {
-    kick: 'X..x..x...x..x..', snare: '....X.......X...', chh: 'x.xxx.xxx.xxx.xx' } },
-  { name: 'Shuffle', bpm: 92, swing: 67, lanes: {
-    kick: 'X.....x.X.....x.', snare: '....X.......X...', chh: 'X.xxX.xxX.xxX.xx' } },
-  { name: 'Trap', bpm: 140, swing: 50, lanes: {
-    kick: 'X.....x...x....x', clap: '........X.......', chh: 'xgxgxgxgxxxxxgxg', ohh: '.......x........' } },
-  { name: 'Drum & bass', bpm: 172, swing: 50, lanes: {
-    kick: 'X.........X.....', snare: '....X..g.g..X...', chh: 'x.x.x.x.x.x.x.x.' } },
-  { name: 'Reggae one drop', bpm: 76, swing: 62, lanes: {
-    kick: '........X.......', rim: '........x.......', chh: 'x.x.x.x.x.x.x.x.' } },
-  { name: 'Dembow', bpm: 96, swing: 50, lanes: {
-    kick: 'X...X...X...X...', snare: '...x..x....x..x.', chh: 'x.x.x.x.x.x.x.x.' } },
-  { name: 'Bossa nova', bpm: 128, swing: 50, lanes: {
-    kick: 'X..xX..xX..xX..x', rim: 'x..x..x...x..x..', chh: 'gggggggggggggggg' } },
-  { name: 'Son clave 3-2', bpm: 104, swing: 50, lanes: {
-    kick: 'X...X...X...X...', rim: 'x..x..x...x.x...', perc2: 'x.x.x.x.x.x.x.x.', tom1: '......x.......x.' } },
-  { name: 'Empty', bpm: 120, swing: 50, lanes: {} },
-];
-
-const fromPreset = (p) => ({
-  name: p.name, edited: false, bpm: p.bpm, swing: p.swing,
-  lanes: Object.fromEntries(LANES.map(([id]) => [id, (p.lanes[id] || '').padEnd(STEPS, '.').slice(0, STEPS)])),
-});
-let seq = store.get('seq') || fromPreset(PRESETS[0]);
-const laneKeys = { ...Object.fromEntries(LANES.map(([id, , code]) => [id, code])), ...store.get('laneKeys') };
-let binding = null;          // lane waiting for a key press
-let playing = false, step = 0, nextTime = 0, shownStep = -1;
-const drawQueue = [];        // {i, t, hits} in audio time, drained by the animation loop
-let cells = [];              // cells[step] -> elements in that column
-
-let recording = false;
-let metronome = store.get('metro') ?? false;
-const scheduled = [];        // recent {i, t} steps already handed to the audio clock
-const skipOnce = new Set();  // 'lane:step' notes played live just before the sequencer reached them
-const undoStack = [];        // snapshots of seq.lanes
-
-function saveSeq() { store.set('seq', seq); }
-
-function snapshot() {
-  undoStack.push(JSON.stringify(seq.lanes));
-  if (undoStack.length > 100) undoStack.shift();
+// ---------- sequencer UI ----------
+function bindLane(code) {
+  laneKeys[binding] = code;
+  store.set('laneKeys', laneKeys);
+  binding = null;
+  renderGrid();
 }
 
-function undo() {
-  const prev = undoStack.pop();
-  if (!prev) return;
-  seq.lanes = JSON.parse(prev);
-  seq.edited = true;
-  saveSeq(); renderTransport(); renderGrid();
-}
-
-function writeStep(id, i, v) {
-  const row = seq.lanes[id];
-  seq.lanes[id] = row.slice(0, i) + v + row.slice(i + 1);
-  seq.edited = true;
-  saveSeq();
-}
-
-// Put a live hit on the step nearest to when you heard it. Sound reaches your
-// ears outputLatency after the audio clock schedules it, so compare against that.
-function recordHit(code, accent) {
-  const lat = (ctx.outputLatency || 0) + (ctx.baseLatency || 0);
-  const heard = ctx.currentTime - lat;
-  const stepDur = 60 / seq.bpm / 4;
-  let best = { i: step, t: nextTime + (step % 2 ? (seq.swing - 50) / 50 * stepDur : 0), pending: true };
-  for (const s of scheduled) if (Math.abs(s.t - heard) < Math.abs(best.t - heard)) best = s;
-  if (!scheduled.length && best.t - heard > stepDur / 2) return; // still counting in
-
+// A key with no lane takes over the first empty lane, then records into it
+function recordKey(code, accent) {
   let lane = LANES.find(([id]) => laneKeys[id] === code)?.[0];
   if (!lane) {
-    lane = LANES.find(([id]) => !/[^.]/.test(seq.lanes[id]))?.[0];
+    lane = LANES.find(([id]) => engine.isEmpty(id))?.[0];
     if (!lane) return;
     laneKeys[lane] = code;
     store.set('laneKeys', laneKeys);
   }
-  const cur = seq.lanes[lane][best.i], v = accent ? 'X' : 'x';
-  if (cur === 'X' || cur === v) return;
-  // You already heard it live; don't let the sequencer play it again this time round
-  if (best.pending) skipOnce.add(lane + ':' + best.i);
-  writeStep(lane, best.i, v);
-  renderTransport();
-  renderGrid();
-}
-
-function toggleRecord() {
-  recording = !recording;
-  if (recording) {
-    snapshot();                  // one undo per take
-    if (!playing) togglePlay(true);
-  }
-  renderTransport();
-  $('grid').classList.toggle('rec', recording);
-}
-
-// Metronome: a short sine blip, higher on the downbeat
-function click(t, down) {
-  const osc = ctx.createOscillator(), g = ctx.createGain();
-  osc.frequency.value = down ? 1760 : 1320;
-  g.gain.setValueAtTime(0.25, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-  osc.connect(g).connect(master);
-  osc.start(t);
-  osc.stop(t + 0.05);
-  return osc;
+  if (!engine.recordHit(lane, accent)) renderGrid();
 }
 
 function renderTransport() {
+  const seq = engine.seq;
   // An edited beat gets its own entry, so picking the original reverts to it
   $('pattern').innerHTML = (seq.edited ? `<option value="" selected>${seq.name} (edited)</option>` : '') +
     PRESETS.map((p) => `<option${!seq.edited && p.name === seq.name ? ' selected' : ''}>${p.name}</option>`).join('');
   $('bpm').value = seq.bpm;
   $('swing').value = seq.swing;
   $('swingVal').textContent = seq.swing + '%';
-  $('play').textContent = playing ? '■ Stop' : '▶ Play';
-  $('play').classList.toggle('on', playing);
-  $('rec').classList.toggle('on', recording);
+  $('play').textContent = engine.playing ? '■ Stop' : '▶ Play';
+  $('play').classList.toggle('on', engine.playing);
+  $('rec').classList.toggle('on', engine.recording);
   if (!$('rec').dataset.counting) $('rec').textContent = '● Rec';
-  $('metro').classList.toggle('on', metronome);
+  $('metro').classList.toggle('on', engine.metronome);
+  $('grid').classList.toggle('rec', engine.recording);
 }
 
 function renderGrid() {
@@ -603,7 +466,7 @@ function renderGrid() {
     grid.append(lane);
 
     for (let i = 0; i < STEPS; i++) {
-      const v = seq.lanes[id][i];
+      const v = engine.seq.lanes[id][i];
       const cell = document.createElement('button');
       cell.className = 'cell' + (v !== '.' ? ' ' + v : '') + ((i >> 2) % 2 ? ' alt' : '') +
         (i % 4 === 0 && i ? ' beat' : '') + (i === shownStep ? ' now' : '');
@@ -611,134 +474,27 @@ function renderGrid() {
       cell.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         if (e.button === 2) return;
-        setStep(id, i, NEXT[seq.lanes[id][i]]);
+        const next = NEXT[engine.seq.lanes[id][i]];
+        engine.setStep(id, i, next);
+        if (!engine.playing && next !== '.') flash(code);
       });
-      cell.addEventListener('contextmenu', (e) => { e.preventDefault(); setStep(id, i, '.'); });
+      cell.addEventListener('contextmenu', (e) => { e.preventDefault(); engine.setStep(id, i, '.'); });
       cells[i].push(cell);
       grid.append(cell);
     }
   }
 }
 
-function setStep(id, i, v) {
-  snapshot();
-  writeStep(id, i, v);
-  renderTransport();
-  renderGrid();
-  // Audition when stopped, so you can hear what you're placing
-  if (!playing && v !== '.' && kit && map[laneKeys[id]]) { play(map[laneKeys[id]], LEVEL[v]); flash(laneKeys[id]); }
-}
-
-function loadPreset(name) {
-  snapshot();
-  seq = fromPreset(PRESETS.find((p) => p.name === name));
-  saveSeq();
-  renderTransport();
-  renderGrid();
-}
-
-// Timing: a worker ticks every 25 ms (keeps running in background tabs);
-// each tick schedules any steps falling in the next 120 ms on the audio clock.
-const clock = new Worker(URL.createObjectURL(new Blob(
-  ['let t; onmessage = (e) => { clearInterval(t); if (e.data) t = setInterval(() => postMessage(0), 25); };'],
-  { type: 'text/javascript' })));
-clock.onmessage = tick;
-
-function tick() {
-  const stepDur = 60 / seq.bpm / 4;
-  if (nextTime < ctx.currentTime - 0.05) nextTime = ctx.currentTime + 0.01; // fell behind: don't burst-play
-  while (nextTime < ctx.currentTime + 0.12) {
-    const swing = step % 2 ? (seq.swing - 50) / 50 * stepDur : 0;
-    scheduleStep(step, nextTime + swing);
-    nextTime += stepDur;
-    step = (step + 1) % STEPS;
-  }
-}
-
-function scheduleStep(i, t) {
-  const hits = [];
-  scheduled.push({ i, t });
-  if (scheduled.length > STEPS) scheduled.shift();
-  if (metronome && i % 4 === 0) click(t, i === 0);
-  for (const [id] of LANES) {
-    if (skipOnce.delete(id + ':' + i)) continue;
-    const level = LEVEL[seq.lanes[id][i]];
-    const code = laneKeys[id], file = map[code];
-    if (!level || !file) continue;
-    const url = urlFor(kit, file);
-    const buf = ready.get(url);
-    if (!buf) { load(url).catch(() => {}); continue; } // still downloading: skip this hit
-    voice(buf, catOf(kit, file), level, t);
-    hits.push(code);
-  }
-  drawQueue.push({ i, t, hits });
-}
-
-function draw() {
-  if (!playing) return;
-  while (drawQueue.length && drawQueue[0].t <= ctx.currentTime) {
-    const { i, hits, count } = drawQueue.shift();
-    if (count) { $('rec').textContent = '● ' + count; $('rec').dataset.counting = 1; continue; }
-    if ($('rec').dataset.counting) { delete $('rec').dataset.counting; countClicks = []; renderTransport(); }
-    for (const c of cells[shownStep] || []) c.classList.remove('now');
-    for (const c of cells[i]) c.classList.add('now');
-    shownStep = i;
-    hits.forEach(flash);
-  }
-  requestAnimationFrame(draw);
-}
-
-// countIn: one bar of clicks before step 1 (used when recording from a stop)
-let countClicks = [];
-function togglePlay(countIn = false) {
-  audio();
-  playing = !playing;
-  if (playing) {
-    step = 0;
-    nextTime = ctx.currentTime + 0.06;
-    drawQueue.length = 0;
-    if (countIn) {
-      const beat = 60 / seq.bpm;
-      for (let b = 0; b < 4; b++) {
-        const t = nextTime + b * beat;
-        countClicks.push(click(t, b === 0));
-        drawQueue.push({ count: 4 - b, t });
-      }
-      nextTime += 4 * beat;
-    }
-    scheduled.length = 0;
-    skipOnce.clear();
-    clock.postMessage(true);
-    requestAnimationFrame(draw);
-  } else {
-    clock.postMessage(false);
-    for (const osc of countClicks) try { osc.stop(); } catch {}
-    countClicks = [];
-    delete $('rec').dataset.counting;
-    if (recording) { recording = false; $('grid').classList.remove('rec'); }
-    for (const c of cells[shownStep] || []) c.classList.remove('now');
-    shownStep = -1;
-  }
-  renderTransport();
-}
-
-$('play').onclick = (e) => { e.currentTarget.blur(); togglePlay(); };
-$('pattern').onchange = (e) => { if (e.target.value) loadPreset(e.target.value); e.target.blur(); };
-$('bpm').onchange = (e) => {
-  seq.bpm = Math.min(260, Math.max(40, Math.round(+e.target.value) || seq.bpm));
-  seq.edited = true; saveSeq(); renderTransport(); e.target.blur();
-};
+$('play').onclick = (e) => { e.currentTarget.blur(); engine.togglePlay(); };
+$('pattern').onchange = (e) => { if (e.target.value) engine.loadPreset(e.target.value); e.target.blur(); };
+$('bpm').onchange = (e) => { engine.setBpm(+e.target.value); e.target.blur(); };
 $('bpm').onkeydown = (e) => { if (e.key === 'Enter' || e.key === 'Escape') e.target.blur(); };
-$('swing').oninput = (e) => { seq.swing = +e.target.value; seq.edited = true; saveSeq(); $('swingVal').textContent = seq.swing + '%'; };
+$('swing').oninput = (e) => { engine.setSwing(+e.target.value); $('swingVal').textContent = engine.seq.swing + '%'; };
 $('swing').onchange = (e) => { renderTransport(); e.target.blur(); };
-$('rec').onclick = (e) => { e.currentTarget.blur(); toggleRecord(); };
-$('metro').onclick = (e) => { metronome = !metronome; store.set('metro', metronome); renderTransport(); e.currentTarget.blur(); };
-$('undo').onclick = (e) => { undo(); e.currentTarget.blur(); };
-$('clear').onclick = (e) => {
-  snapshot();
-  for (const [id] of LANES) seq.lanes[id] = '.'.repeat(STEPS);
-  seq.edited = true; saveSeq(); renderTransport(); renderGrid(); e.currentTarget.blur();
-};
+$('rec').onclick = (e) => { e.currentTarget.blur(); engine.toggleRecord(); };
+$('metro').onclick = (e) => { engine.setMetronome(!engine.metronome); e.currentTarget.blur(); };
+$('undo').onclick = (e) => { engine.undo(); e.currentTarget.blur(); };
+$('clear').onclick = (e) => { engine.clear(); e.currentTarget.blur(); };
 
 // ---------- input ----------
 let lastHit = null;
@@ -749,15 +505,15 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { const first = kits.find((k) => k.li?.isConnected); if (first) setKit(first); e.target.blur(); }
     return;
   }
-  if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && e.target.tagName !== 'INPUT') { e.preventDefault(); undo(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && e.target.tagName !== 'INPUT') { e.preventDefault(); engine.undo(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey || e.target.tagName === 'SELECT' ||
       e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
-  if (e.code === 'Space') { e.preventDefault(); document.activeElement.blur(); if (!e.repeat) togglePlay(); return; }
-  if (e.code === 'Enter') { e.preventDefault(); document.activeElement.blur(); if (!e.repeat) toggleRecord(); return; }
+  if (e.code === 'Space') { e.preventDefault(); document.activeElement.blur(); if (!e.repeat) engine.togglePlay(); return; }
+  if (e.code === 'Enter') { e.preventDefault(); document.activeElement.blur(); if (!e.repeat) engine.toggleRecord(); return; }
   if (binding) {
     e.preventDefault();
-    if (slotCodes.has(e.code)) { laneKeys[binding] = e.code; store.set('laneKeys', laneKeys); trigger(e.code, false); }
-    if (slotCodes.has(e.code) || e.code === 'Escape') { binding = null; renderGrid(); }
+    if (slotCodes.has(e.code)) { trigger(e.code, false); bindLane(e.code); }
+    else if (e.code === 'Escape') { binding = null; renderGrid(); }
     return;
   }
   if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') { e.preventDefault(); stepKit(e.code === 'ArrowLeft' ? -1 : 1); return; }
@@ -769,20 +525,19 @@ document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   lastHit = e.code;
   trigger(e.code, e.shiftKey);
-  if (recording && playing) recordHit(e.code, e.shiftKey);
+  if (engine.recording && engine.playing) recordKey(e.code, e.shiftKey);
 });
 
 $('search').addEventListener('input', renderKitList);
-$('vol').addEventListener('input', (e) => { if (master) master.gain.value = +e.target.value; store.set('vol', +e.target.value); });
+$('vol').addEventListener('input', (e) => engine.setVolume(+e.target.value));
 $('vol').addEventListener('change', (e) => e.target.blur());
 $('reset').onclick = () => { if (!kit) return; store.set('map.' + kit.name, null); setKit(kit); };
 
 // ---------- start ----------
 buildBoard();
+$('vol').value = engine.volume;
 renderTransport();
 renderGrid();
-const vol = store.get('vol');
-if (vol != null) $('vol').value = vol;
 fetch('kits.json').then((r) => r.json()).then((data) => {
   kits = data;
   renderKitList();
