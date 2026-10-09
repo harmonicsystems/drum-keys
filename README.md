@@ -44,6 +44,13 @@ reggae one drop, dembow, bossa nova, son clave, and an empty grid).
 - Lanes play **keys**, not samples, so any beat plays on whichever machine is
   loaded — switch machines while it runs. Click a lane name, then press a key
   (or click a pad) to point that lane at a different pad.
+- `Enter` (or **● Rec**) records what you play: it starts playback if needed and
+  each hit snaps to the nearest step, measured against when you *heard* the beat
+  (the audio output latency is subtracted). Shift records an accent. A key with no
+  lane takes over the first empty lane. Recording overdubs — it loops until you
+  stop. **Click** toggles a metronome.
+- **Undo** / `⌘Z` steps back through takes (one per recording pass), step edits,
+  clears and beat changes.
 - Notes are scheduled on the audio clock a little ahead of time (a worker keeps
   the clock ticking in background tabs), so timing stays tight.
 - The current beat and lane keys are remembered in this browser.

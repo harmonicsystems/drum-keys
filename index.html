@@ -9,7 +9,7 @@
     --bg: #f4efe6; --panel: #ebe4d8; --line: #d8cfbf; --ink: #3b342c; --muted: #8a7f70;
     --key: #fbf8f2; --focus: #5d5346;
     --k: #c07a5a; --s: #c9a14f; --c: #8fa37a; --r: #7c9a8e; --h: #7389a3; --o: #93a6c4;
-    --t: #9d7f9e; --y: #b8a47c; --p: #9b958b;
+    --t: #9d7f9e; --y: #b8a47c; --p: #9b958b; --rec: #b5574d;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #1e1b18; --panel: #27231f; --line: #3a342d; --ink: #e8e0d3; --muted: #9a8f80;
@@ -79,6 +79,10 @@
   #swingVal { font: 12px ui-monospace, monospace; width: 3ch; }
   #play { min-width: 84px; font-weight: 600; color: var(--ink); }
   #play.on { background: var(--focus); color: var(--bg); border-color: var(--focus); }
+  #rec { color: var(--rec); }
+  #rec.on { background: var(--rec); color: var(--bg); border-color: var(--rec); }
+  #metro.on { border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); }
+  #grid.rec { outline: 2px solid var(--rec); outline-offset: 6px; border-radius: 4px; }
   #grid { display: grid; grid-template-columns: 150px repeat(16, minmax(14px, 1fr)); gap: 3px; max-width: 900px; user-select: none; }
   .lane { display: flex; align-items: center; gap: 6px; padding: 0 6px; border: 0; background: none; cursor: pointer;
           text-align: left; min-width: 0; border-left: 3px solid var(--cat, var(--line)); }
@@ -128,14 +132,18 @@
   <section id="seq">
     <div class="transport">
       <button class="btn" id="play">▶ Play</button>
+      <button class="btn" id="rec" title="Record what you play into the grid (Enter)">● Rec</button>
+      <button class="btn" id="metro" title="Metronome click on every beat">Click</button>
       <label>Beat <select id="pattern"></select></label>
       <label>BPM <input id="bpm" type="number" min="40" max="260" step="1"></label>
       <label>Swing <input id="swing" type="range" min="50" max="75" step="1"><span id="swingVal"></span></label>
+      <button class="btn" id="undo" title="Undo (⌘Z / Ctrl+Z)">Undo</button>
       <button class="btn" id="clear">Clear</button>
     </div>
     <div id="grid"></div>
     <p class="hint">
-      <kbd>Space</kbd> play / stop · click a step: on → accent → ghost → off · right-click clears ·
+      <kbd>Space</kbd> play / stop · <kbd>Enter</kbd> record: play along and hits snap to the nearest step
+      (a key with no lane takes the first empty one) · <kbd>⌘Z</kbd> undo · click a step: on → accent → ghost → off · right-click clears ·
       click a lane name, then press a key to give it that pad’s sound. Switch machines while it plays.
     </p>
   </section>
@@ -289,6 +297,7 @@ function buildBoard() {
         e.preventDefault();
         trigger(code, e.shiftKey);
         if (binding) { laneKeys[binding] = code; store.set('laneKeys', laneKeys); binding = null; renderGrid(); return; }
+        if (recording && playing) { recordHit(code, e.shiftKey); return; }
         select(code);
       });
       pads[code] = pad;
@@ -485,7 +494,79 @@ let playing = false, step = 0, nextTime = 0, shownStep = -1;
 const drawQueue = [];        // {i, t, hits} in audio time, drained by the animation loop
 let cells = [];              // cells[step] -> elements in that column
 
+let recording = false;
+let metronome = store.get('metro') ?? false;
+const scheduled = [];        // recent {i, t} steps already handed to the audio clock
+const skipOnce = new Set();  // 'lane:step' notes played live just before the sequencer reached them
+const undoStack = [];        // snapshots of seq.lanes
+
 function saveSeq() { store.set('seq', seq); }
+
+function snapshot() {
+  undoStack.push(JSON.stringify(seq.lanes));
+  if (undoStack.length > 100) undoStack.shift();
+}
+
+function undo() {
+  const prev = undoStack.pop();
+  if (!prev) return;
+  seq.lanes = JSON.parse(prev);
+  seq.edited = true;
+  saveSeq(); renderTransport(); renderGrid();
+}
+
+function writeStep(id, i, v) {
+  const row = seq.lanes[id];
+  seq.lanes[id] = row.slice(0, i) + v + row.slice(i + 1);
+  seq.edited = true;
+  saveSeq();
+}
+
+// Put a live hit on the step nearest to when you heard it. Sound reaches your
+// ears outputLatency after the audio clock schedules it, so compare against that.
+function recordHit(code, accent) {
+  const lat = (ctx.outputLatency || 0) + (ctx.baseLatency || 0);
+  const heard = ctx.currentTime - lat;
+  const stepDur = 60 / seq.bpm / 4;
+  let best = { i: step, t: nextTime + (step % 2 ? (seq.swing - 50) / 50 * stepDur : 0), pending: true };
+  for (const s of scheduled) if (Math.abs(s.t - heard) < Math.abs(best.t - heard)) best = s;
+
+  let lane = LANES.find(([id]) => laneKeys[id] === code)?.[0];
+  if (!lane) {
+    lane = LANES.find(([id]) => !/[^.]/.test(seq.lanes[id]))?.[0];
+    if (!lane) return;
+    laneKeys[lane] = code;
+    store.set('laneKeys', laneKeys);
+  }
+  const cur = seq.lanes[lane][best.i], v = accent ? 'X' : 'x';
+  if (cur === 'X' || cur === v) return;
+  // You already heard it live; don't let the sequencer play it again this time round
+  if (best.pending) skipOnce.add(lane + ':' + best.i);
+  writeStep(lane, best.i, v);
+  renderTransport();
+  renderGrid();
+}
+
+function toggleRecord() {
+  recording = !recording;
+  if (recording) {
+    snapshot();                  // one undo per take
+    if (!playing) togglePlay();
+  }
+  renderTransport();
+  $('grid').classList.toggle('rec', recording);
+}
+
+// Metronome: a short sine blip, higher on the downbeat
+function click(t, down) {
+  const osc = ctx.createOscillator(), g = ctx.createGain();
+  osc.frequency.value = down ? 1760 : 1320;
+  g.gain.setValueAtTime(0.25, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+  osc.connect(g).connect(master);
+  osc.start(t);
+  osc.stop(t + 0.05);
+}
 
 function renderTransport() {
   // An edited beat gets its own entry, so picking the original reverts to it
@@ -496,6 +577,8 @@ function renderTransport() {
   $('swingVal').textContent = seq.swing + '%';
   $('play').textContent = playing ? '■ Stop' : '▶ Play';
   $('play').classList.toggle('on', playing);
+  $('rec').classList.toggle('on', recording);
+  $('metro').classList.toggle('on', metronome);
 }
 
 function renderGrid() {
@@ -535,10 +618,8 @@ function renderGrid() {
 }
 
 function setStep(id, i, v) {
-  const row = seq.lanes[id];
-  seq.lanes[id] = row.slice(0, i) + v + row.slice(i + 1);
-  seq.edited = true;
-  saveSeq();
+  snapshot();
+  writeStep(id, i, v);
   renderTransport();
   renderGrid();
   // Audition when stopped, so you can hear what you're placing
@@ -546,6 +627,7 @@ function setStep(id, i, v) {
 }
 
 function loadPreset(name) {
+  snapshot();
   seq = fromPreset(PRESETS.find((p) => p.name === name));
   saveSeq();
   renderTransport();
@@ -572,7 +654,11 @@ function tick() {
 
 function scheduleStep(i, t) {
   const hits = [];
+  scheduled.push({ i, t });
+  if (scheduled.length > STEPS) scheduled.shift();
+  if (metronome && i % 4 === 0) click(t, i === 0);
   for (const [id] of LANES) {
+    if (skipOnce.delete(id + ':' + i)) continue;
     const level = LEVEL[seq.lanes[id][i]];
     const code = laneKeys[id], file = map[code];
     if (!level || !file) continue;
@@ -604,10 +690,13 @@ function togglePlay() {
     step = 0;
     nextTime = ctx.currentTime + 0.06;
     drawQueue.length = 0;
+    scheduled.length = 0;
+    skipOnce.clear();
     clock.postMessage(true);
     requestAnimationFrame(draw);
   } else {
     clock.postMessage(false);
+    if (recording) { recording = false; $('grid').classList.remove('rec'); }
     for (const c of cells[shownStep] || []) c.classList.remove('now');
     shownStep = -1;
   }
@@ -623,7 +712,11 @@ $('bpm').onchange = (e) => {
 $('bpm').onkeydown = (e) => { if (e.key === 'Enter' || e.key === 'Escape') e.target.blur(); };
 $('swing').oninput = (e) => { seq.swing = +e.target.value; seq.edited = true; saveSeq(); $('swingVal').textContent = seq.swing + '%'; };
 $('swing').onchange = (e) => { renderTransport(); e.target.blur(); };
+$('rec').onclick = (e) => { e.currentTarget.blur(); toggleRecord(); };
+$('metro').onclick = (e) => { metronome = !metronome; store.set('metro', metronome); renderTransport(); e.currentTarget.blur(); };
+$('undo').onclick = (e) => { undo(); e.currentTarget.blur(); };
 $('clear').onclick = (e) => {
+  snapshot();
   for (const [id] of LANES) seq.lanes[id] = '.'.repeat(STEPS);
   seq.edited = true; saveSeq(); renderTransport(); renderGrid(); e.currentTarget.blur();
 };
@@ -637,9 +730,11 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { const first = kits.find((k) => k.li?.isConnected); if (first) setKit(first); e.target.blur(); }
     return;
   }
+  if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && e.target.tagName !== 'INPUT') { e.preventDefault(); undo(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey || e.target.tagName === 'SELECT' ||
       e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
   if (e.code === 'Space') { e.preventDefault(); document.activeElement.blur(); if (!e.repeat) togglePlay(); return; }
+  if (e.code === 'Enter') { e.preventDefault(); document.activeElement.blur(); if (!e.repeat) toggleRecord(); return; }
   if (binding) {
     e.preventDefault();
     if (slotCodes.has(e.code)) { laneKeys[binding] = e.code; store.set('laneKeys', laneKeys); trigger(e.code, false); }
@@ -655,6 +750,7 @@ document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   lastHit = e.code;
   trigger(e.code, e.shiftKey);
+  if (recording && playing) recordHit(e.code, e.shiftKey);
 });
 
 $('search').addEventListener('input', renderKitList);
