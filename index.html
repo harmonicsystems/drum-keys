@@ -530,6 +530,7 @@ function recordHit(code, accent) {
   const stepDur = 60 / seq.bpm / 4;
   let best = { i: step, t: nextTime + (step % 2 ? (seq.swing - 50) / 50 * stepDur : 0), pending: true };
   for (const s of scheduled) if (Math.abs(s.t - heard) < Math.abs(best.t - heard)) best = s;
+  if (!scheduled.length && best.t - heard > stepDur / 2) return; // still counting in
 
   let lane = LANES.find(([id]) => laneKeys[id] === code)?.[0];
   if (!lane) {
@@ -551,7 +552,7 @@ function toggleRecord() {
   recording = !recording;
   if (recording) {
     snapshot();                  // one undo per take
-    if (!playing) togglePlay();
+    if (!playing) togglePlay(true);
   }
   renderTransport();
   $('grid').classList.toggle('rec', recording);
@@ -566,6 +567,7 @@ function click(t, down) {
   osc.connect(g).connect(master);
   osc.start(t);
   osc.stop(t + 0.05);
+  return osc;
 }
 
 function renderTransport() {
@@ -578,6 +580,7 @@ function renderTransport() {
   $('play').textContent = playing ? '■ Stop' : '▶ Play';
   $('play').classList.toggle('on', playing);
   $('rec').classList.toggle('on', recording);
+  if (!$('rec').dataset.counting) $('rec').textContent = '● Rec';
   $('metro').classList.toggle('on', metronome);
 }
 
@@ -674,7 +677,9 @@ function scheduleStep(i, t) {
 function draw() {
   if (!playing) return;
   while (drawQueue.length && drawQueue[0].t <= ctx.currentTime) {
-    const { i, hits } = drawQueue.shift();
+    const { i, hits, count } = drawQueue.shift();
+    if (count) { $('rec').textContent = '● ' + count; $('rec').dataset.counting = 1; continue; }
+    if ($('rec').dataset.counting) { delete $('rec').dataset.counting; countClicks = []; renderTransport(); }
     for (const c of cells[shownStep] || []) c.classList.remove('now');
     for (const c of cells[i]) c.classList.add('now');
     shownStep = i;
@@ -683,19 +688,33 @@ function draw() {
   requestAnimationFrame(draw);
 }
 
-function togglePlay() {
+// countIn: one bar of clicks before step 1 (used when recording from a stop)
+let countClicks = [];
+function togglePlay(countIn = false) {
   audio();
   playing = !playing;
   if (playing) {
     step = 0;
     nextTime = ctx.currentTime + 0.06;
     drawQueue.length = 0;
+    if (countIn) {
+      const beat = 60 / seq.bpm;
+      for (let b = 0; b < 4; b++) {
+        const t = nextTime + b * beat;
+        countClicks.push(click(t, b === 0));
+        drawQueue.push({ count: 4 - b, t });
+      }
+      nextTime += 4 * beat;
+    }
     scheduled.length = 0;
     skipOnce.clear();
     clock.postMessage(true);
     requestAnimationFrame(draw);
   } else {
     clock.postMessage(false);
+    for (const osc of countClicks) try { osc.stop(); } catch {}
+    countClicks = [];
+    delete $('rec').dataset.counting;
     if (recording) { recording = false; $('grid').classList.remove('rec'); }
     for (const c of cells[shownStep] || []) c.classList.remove('now');
     shownStep = -1;
