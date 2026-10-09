@@ -51,6 +51,8 @@
   #rec { flex: 1; color: var(--rec); }
   #rec.on { background: var(--rec); color: var(--bg); border-color: var(--rec); }
   #metro, #undo { flex: 1; }
+  #fav { width: 44px; padding: 0; font-size: 19px; flex: none; }
+  #fav.on { color: var(--s); }
   select { height: 40px; flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--key); border-radius: 10px; padding: 0 8px; }
   .bpm { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; background: var(--key); height: 40px; }
   .bpm button { width: 34px; height: 100%; border: 0; background: none; font-size: 18px; color: var(--muted); cursor: pointer; }
@@ -124,6 +126,7 @@
   </div>
   <div class="bar">
     <select id="pattern" aria-label="Beat"></select>
+    <button class="btn" id="fav" aria-label="Save as favorite">☆</button>
     <div class="bpm">
       <button id="slower" aria-label="Slower">−</button>
       <input id="bpm" type="number" inputmode="numeric" min="40" max="260" aria-label="Tempo (BPM)">
@@ -162,7 +165,7 @@
 </dialog>
 
 <script type="module">
-import { sampleUrl, createEngine, makeStore, PRESETS, STEPS, NEXT } from '../engine.js';
+import { sampleUrl, createEngine, createFavorites, beatOptions, makeStore, STEPS, NEXT } from '../engine.js';
 import { LANES, LAYOUT, MACHINES } from './machines.js';
 
 const $ = (id) => document.getElementById(id);
@@ -202,6 +205,19 @@ const engine = createEngine({
     shownStep = i;
     document.querySelectorAll('.step').forEach((s, n) => s.classList.toggle('now', n === i));
     hits.forEach(flash);
+  },
+});
+
+// A favorite = beat + machine + any swapped pad sounds
+const favs = createFavorites({
+  store, engine,
+  capture: () => ({ machine: machine.id, pads: { ...custom[machine.id] } }),
+  apply(state) {
+    const m = MACHINES.find((x) => x.id === state.machine);
+    if (!m) return;
+    custom[m.id] = { ...state.pads };
+    store.set('custom', custom);
+    setMachine(m);
   },
 });
 
@@ -294,8 +310,11 @@ function renderSteps() {
 // ---------- transport ----------
 function renderTransport() {
   const seq = engine.seq;
-  $('pattern').innerHTML = (seq.edited ? `<option value="" selected>${seq.name} (edited)</option>` : '') +
-    PRESETS.map((p) => `<option${!seq.edited && p.name === seq.name ? ' selected' : ''}>${p.name}</option>`).join('');
+  const current = favs.current();
+  $('pattern').innerHTML = beatOptions(seq, favs.list, current);
+  $('fav').textContent = current ? '★' : '☆';
+  $('fav').classList.toggle('on', !!current);
+  $('fav').setAttribute('aria-label', current ? `Remove favorite ${current.name}` : 'Save as favorite');
   $('bpm').value = seq.bpm;
   $('swing').value = seq.swing;
   $('swingVal').textContent = seq.swing + '%';
@@ -312,7 +331,23 @@ $('rec').onclick = () => engine.toggleRecord();
 $('metro').onclick = () => engine.setMetronome(!engine.metronome);
 $('undo').onclick = () => engine.undo();
 $('clear').onclick = () => engine.clear();
-$('pattern').onchange = (e) => { if (e.target.value) engine.loadPreset(e.target.value); e.target.blur(); };
+$('pattern').onchange = (e) => {
+  const v = e.target.value;
+  if (v.startsWith('fav:')) favs.load(v.slice(4));
+  else if (v) engine.loadPreset(v);
+  e.target.blur();
+};
+$('fav').onclick = () => {
+  const current = favs.current();
+  if (current) {
+    if (confirm(`Remove “${current.name}” from favorites?`)) favs.remove(current.id);
+  } else {
+    const base = engine.seq.name;
+    const name = prompt('Name this favorite', `${base} · ${machine.name} · ${engine.seq.bpm}`)?.trim();
+    if (name) favs.save(name);
+  }
+  renderTransport();
+};
 $('bpm').onchange = (e) => { engine.setBpm(+e.target.value); e.target.blur(); };
 $('slower').onclick = () => engine.setBpm(engine.seq.bpm - 1);
 $('faster').onclick = () => engine.setBpm(engine.seq.bpm + 1);
@@ -328,6 +363,7 @@ function setMachine(m) {
   $('mMeta').textContent = `${m.maker} · ${m.year}${m.guessed ? ' · pads by ear' : ''}`;
   renderPads();
   renderSteps();
+  renderTransport();
 }
 
 function stepMachine(dir) {
@@ -411,6 +447,7 @@ async function openSwap(id) {
       b.classList.add('on');
       hit(id);
       renderPads();
+      renderTransport();
     };
     list.append(b);
   }
@@ -421,6 +458,7 @@ $('swapReset').onclick = () => {
   if (custom[machine.id]) delete custom[machine.id][swapping];
   store.set('custom', custom);
   renderPads();
+  renderTransport();
   $('swap').close();
 };
 // Tap the backdrop to close a sheet

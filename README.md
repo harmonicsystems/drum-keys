@@ -52,6 +52,10 @@ reggae one drop, dembow, bossa nova, son clave, and an empty grid).
   stop. **Click** toggles a metronome.
 - **Undo** / `⌘Z` steps back through takes (one per recording pass), step edits,
   clears and beat changes.
+- **☆ Save** stores a favorite: the beat (pattern, tempo, swing) together with the
+  machine and your sample choices. Favorites sit at the top of the Beat menu (★)
+  and restore everything; the star fills when what's loaded matches one exactly,
+  and tapping a filled star removes it. Desktop and app keep separate lists.
 - Notes are scheduled on the audio clock a little ahead of time (a worker keeps
   the clock ticking in background tabs), so timing stays tight.
 - The current beat and lane keys are remembered in this browser.

@@ -80,6 +80,7 @@
   #play { min-width: 84px; font-weight: 600; color: var(--ink); }
   #play.on { background: var(--focus); color: var(--bg); border-color: var(--focus); }
   #rec { color: var(--rec); }
+  #fav.on { color: var(--s); border-color: var(--s); }
   #rec.on { background: var(--rec); color: var(--bg); border-color: var(--rec); }
   #metro.on { border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); }
   #grid.rec { outline: 2px solid var(--rec); outline-offset: 6px; border-radius: 4px; }
@@ -139,6 +140,7 @@
       <label>Swing <input id="swing" type="range" min="50" max="75" step="1"><span id="swingVal"></span></label>
       <button class="btn" id="undo" title="Undo (⌘Z / Ctrl+Z)">Undo</button>
       <button class="btn" id="clear">Clear</button>
+      <button class="btn" id="fav" title="Save this beat, machine and samples as a favorite">☆ Save</button>
     </div>
     <div id="grid"></div>
     <p class="hint">
@@ -151,7 +153,7 @@
 </main>
 
 <script type="module">
-import { sampleUrl, createEngine, makeStore, PRESETS, STEPS, NEXT } from './engine.js';
+import { sampleUrl, createEngine, createFavorites, beatOptions, makeStore, STEPS, NEXT } from './engine.js';
 
 const CAT_NAMES = { k: 'Kick', s: 'Snare', c: 'Clap', r: 'Rim', h: 'Closed hat', o: 'Open hat', t: 'Tom', y: 'Cymbal', p: 'Perc / other' };
 const CAT_ORDER = 'kschotyrp';
@@ -216,6 +218,26 @@ const engine = createEngine({
 });
 window.engine = engine; // handy from the console
 
+// A favorite = beat + machine + its key sounds and lane keys
+function mapDiff() {
+  if (!kit) return {};
+  const auto = autoMap(kit), diff = {};
+  for (const code in map) if (map[code] !== auto[code]) diff[code] = map[code];
+  return diff;
+}
+const favs = createFavorites({
+  store, engine,
+  capture: () => ({ kit: kit?.name ?? null, map: mapDiff(), laneKeys: { ...laneKeys } }),
+  apply(state) {
+    const k = kits.find((x) => x.name === state.kit);
+    if (!k) return;
+    store.set('map.' + k.name, Object.keys(state.map).length ? state.map : null);
+    Object.assign(laneKeys, state.laneKeys);
+    store.set('laneKeys', laneKeys);
+    setKit(k);
+  },
+});
+
 const play = (file, level) => engine.play(urlFor(kit, file), catOf(kit, file), level);
 
 // ---------- mapping ----------
@@ -254,9 +276,7 @@ function autoMap(k) {
 }
 
 function saveMap() {
-  const auto = autoMap(kit);
-  const diff = {};
-  for (const code in map) if (map[code] !== auto[code]) diff[code] = map[code];
+  const diff = mapDiff();
   store.set('map.' + kit.name, Object.keys(diff).length ? diff : null);
 }
 
@@ -355,6 +375,7 @@ function renderBrowser() {
 function assign(file) {
   map[selected] = file;
   saveMap();
+  renderTransport();
   renderPads();
   renderBrowser();
   trigger(selected, false);
@@ -401,6 +422,7 @@ function setKit(k) {
   if (k.li) { k.li.className = 'on'; k.li.scrollIntoView({ block: 'nearest' }); }
   renderPads();
   renderBrowser();
+  renderTransport();
 }
 
 function stepKit(dir) {
@@ -416,6 +438,7 @@ function bindLane(code) {
   laneKeys[binding] = code;
   store.set('laneKeys', laneKeys);
   binding = null;
+  renderTransport();
   renderGrid();
 }
 
@@ -433,9 +456,11 @@ function recordKey(code, accent) {
 
 function renderTransport() {
   const seq = engine.seq;
+  const current = favs.current();
   // An edited beat gets its own entry, so picking the original reverts to it
-  $('pattern').innerHTML = (seq.edited ? `<option value="" selected>${seq.name} (edited)</option>` : '') +
-    PRESETS.map((p) => `<option${!seq.edited && p.name === seq.name ? ' selected' : ''}>${p.name}</option>`).join('');
+  $('pattern').innerHTML = beatOptions(seq, favs.list, current);
+  $('fav').textContent = current ? '★ Saved' : '☆ Save';
+  $('fav').classList.toggle('on', !!current);
   $('bpm').value = seq.bpm;
   $('swing').value = seq.swing;
   $('swingVal').textContent = seq.swing + '%';
@@ -486,7 +511,23 @@ function renderGrid() {
 }
 
 $('play').onclick = (e) => { e.currentTarget.blur(); engine.togglePlay(); };
-$('pattern').onchange = (e) => { if (e.target.value) engine.loadPreset(e.target.value); e.target.blur(); };
+$('pattern').onchange = (e) => {
+  const v = e.target.value;
+  if (v.startsWith('fav:')) favs.load(v.slice(4));
+  else if (v) engine.loadPreset(v);
+  e.target.blur();
+};
+$('fav').onclick = (e) => {
+  e.currentTarget.blur();
+  const current = favs.current();
+  if (current) {
+    if (confirm(`Remove “${current.name}” from favorites?`)) favs.remove(current.id);
+  } else {
+    const name = prompt('Name this favorite', `${engine.seq.name} · ${kit?.name ?? ''} · ${engine.seq.bpm}`)?.trim();
+    if (name) favs.save(name);
+  }
+  renderTransport();
+};
 $('bpm').onchange = (e) => { engine.setBpm(+e.target.value); e.target.blur(); };
 $('bpm').onkeydown = (e) => { if (e.key === 'Enter' || e.key === 'Escape') e.target.blur(); };
 $('swing').oninput = (e) => { engine.setSwing(+e.target.value); $('swingVal').textContent = engine.seq.swing + '%'; };

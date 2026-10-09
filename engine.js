@@ -226,6 +226,15 @@ export function createEngine({ lanes, store, resolve, onChange = () => {}, onDra
 
   function setMetronome(on) { metronome = on; store.set('metro', on); onChange(); }
 
+  // Replace the whole pattern (used when loading a favorite)
+  function loadSeq({ name, bpm, swing, lanes: rows }) {
+    snapshot();
+    seq = { name, edited: false, bpm, swing,
+      lanes: Object.fromEntries(lanes.map((id) => [id, (rows[id] || '').padEnd(STEPS, '.').slice(0, STEPS)])) };
+    save();
+    onChange();
+  }
+
   // ---------- clock ----------
   // A worker ticks every 25 ms (keeps running in background tabs); each tick
   // schedules any steps falling in the next 120 ms on the audio clock.
@@ -330,7 +339,7 @@ export function createEngine({ lanes, store, resolve, onChange = () => {}, onDra
 
   return {
     audio, load, ready, play, chokeAll, setVolume, fromPreset,
-    setStep, loadPreset, clear, undo, setBpm, setSwing, setMetronome,
+    setStep, loadPreset, loadSeq, clear, undo, setBpm, setSwing, setMetronome,
     togglePlay, toggleRecord, recordHit,
     get ctx() { return ctx; },
     get volume() { return volume; },
@@ -340,4 +349,55 @@ export function createEngine({ lanes, store, resolve, onChange = () => {}, onDra
     get metronome() { return metronome; },
     isEmpty: (id) => !/[^.]/.test(seq.lanes[id]),
   };
+}
+
+// ---------- favorites ----------
+// A favorite is the beat (pattern, tempo, swing) plus whatever the app says
+// makes up its sound — capture() returns e.g. { machine, pads }, apply() restores it.
+export function createFavorites({ store, engine, capture, apply }) {
+  let list = store.get('favs') || [];
+  const state = () => {
+    const { bpm, swing, lanes } = engine.seq;
+    return { beat: { bpm, swing, lanes }, ...capture() };
+  };
+  // Key order can differ between saves, so compare a sorted serialisation
+  const canon = (v) => v && typeof v === 'object'
+    ? (Array.isArray(v) ? v.map(canon) : Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])))
+    : v;
+  const key = (s) => JSON.stringify(canon(s));
+  const persist = () => store.set('favs', list);
+
+  return {
+    get list() { return list; },
+    // The favorite that matches exactly what's loaded now, if any
+    current() { const k = key(state()); return list.find((f) => key(f.state) === k); },
+    // Saving under an existing name replaces that favorite
+    save(name) {
+      const fav = { id: Date.now().toString(36), name, state: JSON.parse(JSON.stringify(state())) };
+      list = [fav, ...list.filter((f) => f.name !== name)];
+      persist();
+      return fav;
+    },
+    remove(id) { list = list.filter((f) => f.id !== id); persist(); },
+    load(id) {
+      const fav = list.find((f) => f.id === id);
+      if (!fav) return;
+      apply(fav.state);
+      engine.loadSeq({ name: fav.name, ...fav.state.beat });
+    },
+  };
+}
+
+export const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// <option>s for the Beat menu: favorites first, then the classic beats.
+// Anything that isn't exactly a favorite or an untouched preset shows as "(edited)".
+export function beatOptions(seq, favs, current) {
+  const preset = !seq.edited && PRESETS.some((p) => p.name === seq.name);
+  let html = !current && !preset ? `<option value="" selected>${escapeHtml(seq.name)} (edited)</option>` : '';
+  if (favs.length) html += '<optgroup label="Favorites">' + favs.map((f) =>
+    `<option value="fav:${f.id}"${f === current ? ' selected' : ''}>★ ${escapeHtml(f.name)}</option>`).join('') + '</optgroup>';
+  html += '<optgroup label="Classic beats">' + PRESETS.map((p) =>
+    `<option value="${escapeHtml(p.name)}"${!current && preset && p.name === seq.name ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('') + '</optgroup>';
+  return html;
 }
