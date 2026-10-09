@@ -74,6 +74,10 @@ metronome and undo as the desktop page — both import `engine.js`.
 - **Offline:** the service worker (`app/sw.js`) keeps every archive.org sample it
   sees, so any machine you've opened works offline; "Save all offline" in the
   machine list fetches all 16 (~224 sounds). Nothing is re-hosted.
+- **Shortcuts:** the address bar always holds the whole setup (machine, beat, tempo,
+  swing, swapped pads, favorite name), so Safari's Share → Add to Home Screen saves
+  that exact beat as its own app, named after it and wearing its machine's icon.
+  **Shortcut** (or saving a favorite) shows how, with Copy / Share link.
 - **Curation** lives in `app/machines.js`. After editing it run
   `node scripts/build-machines.mjs` — it checks every pad exists and writes
   `app/machine-files.json` (the swap lists).

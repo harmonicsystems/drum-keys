@@ -9,10 +9,9 @@
 <meta name="theme-color" content="#1e1b18" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Drum Pads">
-<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-title" content="Drum Pads" id="appTitle">
 <link rel="icon" href="icon-192.png" type="image/png">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png" id="touchIcon">
 <style>
   :root {
     --bg: #f4efe6; --panel: #ebe4d8; --line: #d8cfbf; --ink: #3b342c; --muted: #8a7f70;
@@ -58,8 +57,8 @@
   .bpm button { width: 34px; height: 100%; border: 0; background: none; font-size: 18px; color: var(--muted); cursor: pointer; }
   .bpm input { width: 44px; border: 0; background: none; text-align: center; font: 15px ui-monospace, monospace; padding: 0; -moz-appearance: textfield; }
   .bpm input::-webkit-inner-spin-button { -webkit-appearance: none; }
-  .swing { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; flex: 1; }
-  .swing input { flex: 1; min-width: 0; accent-color: var(--focus); }
+  .swing { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; flex: 1; min-width: 0; }
+  .swing input { flex: 1; width: 0; min-width: 0; accent-color: var(--focus); }
   #swingVal { font: 12px ui-monospace, monospace; width: 3ch; }
 
   /* Steps for the selected pad */
@@ -107,6 +106,12 @@
   .list button { text-align: left; border: 1px solid var(--line); background: var(--key); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
   .list button.on { background: var(--focus); color: var(--bg); }
   .credit { color: var(--muted); font-size: 12px; margin: 16px 4px 0; }
+  .shortcut { display: flex; gap: 14px; align-items: center; margin: 4px 4px 14px; }
+  .shortcut img { width: 64px; height: 64px; border-radius: 15px; flex: none; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+  .shortcut .scname { display: block; font-size: 17px; font-weight: 650; }
+  .shortcut p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .linkrow { display: flex; gap: 8px; margin: 0 4px; }
+  .linkrow .btn { flex: 1; }
   .credit a { color: inherit; }
 </style>
 </head>
@@ -136,6 +141,7 @@
   <div class="bar">
     <label class="swing">Swing <input id="swing" type="range" min="50" max="75" step="1"><span id="swingVal"></span></label>
     <button class="btn" id="clear">Clear</button>
+    <button class="btn" id="home" aria-label="Add to Home Screen">Shortcut</button>
   </div>
 
   <div class="steps-head"><b id="laneName">Kick</b><span>tap steps · hold a pad to swap its sound</span></div>
@@ -157,6 +163,20 @@
   </div>
 </dialog>
 
+<dialog id="homeSheet">
+  <div class="sheet">
+    <div class="sheet-head"><h2>Home Screen shortcut</h2><button class="btn" id="homeDone">Done</button></div>
+    <div class="sheet-body">
+      <div class="shortcut">
+        <img id="scIcon" src="icons/tr808.png" alt="">
+        <div><span class="scname" id="scName">808 Rock</span><p id="scHint">Save this exact beat as its own app: tap <b>Share</b> in Safari, then <b>Add to Home Screen</b>.</p></div>
+      </div>
+      <div class="linkrow"><button class="btn" id="shareLink">Share link</button><button class="btn" id="copyLink">Copy link</button></div>
+      <p class="credit">The link holds the machine, beat, tempo, swing and any swapped sounds. Each Home Screen shortcut keeps its own favorites and changes.</p>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="swap">
   <div class="sheet">
     <div class="sheet-head"><h2 id="swapTitle">Swap</h2><button class="btn" id="swapReset">Default</button></div>
@@ -166,6 +186,7 @@
 
 <script type="module">
 import { sampleUrl, createEngine, createFavorites, beatOptions, makeStore, STEPS, NEXT } from '../engine.js';
+import { encode, decode } from './link.js';
 import { LANES, LAYOUT, MACHINES } from './machines.js';
 
 const $ = (id) => document.getElementById(id);
@@ -324,7 +345,79 @@ function renderTransport() {
   if (!$('rec').dataset.counting) $('rec').textContent = '● Rec';
   $('metro').classList.toggle('on', engine.metronome);
   $('steps').classList.toggle('rec', engine.recording);
+  syncHome();
 }
+
+// ---------- the link + home-screen shortcut ----------
+// The address bar always holds the current setup, so Add to Home Screen saves
+// it. iOS gets no manifest (it would launch every shortcut from a bare
+// start_url into empty storage); other browsers get one per setup.
+const isIOS = 'standalone' in navigator;   // only iOS Safari has navigator.standalone
+const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+let manifestLink = null, urlTimer;
+if (!isIOS) { manifestLink = document.createElement('link'); manifestLink.rel = 'manifest'; document.head.append(manifestLink); }
+
+function linkState() {
+  const fav = favs.current();
+  return { query: encode({ machine: machine.id, bpm: engine.seq.bpm, swing: engine.seq.swing, lanes: engine.seq.lanes,
+    pads: custom[machine.id] || {}, name: fav?.name }), name: fav?.name || homeName() };
+}
+// "808 Funk", "SP-1200 Funk": what iOS suggests as the shortcut's name
+function homeName() {
+  const short = { tr808: '808', tr909: '909', tr606: '606', tr707: '707' }[machine.id] || machine.name;
+  return `${short} ${engine.seq.name.replace(/ \(edited\)$/, '')}`;
+}
+const shareUrl = () => new URL('?' + linkState().query, location.href).href;
+
+function syncHome() {
+  const { query, name } = linkState();
+  const icon = `icons/${machine.id}.png`, base = new URL('./', location.href).href;
+  document.title = `${name} · Drum Pads`;
+  $('appTitle').content = name;
+  $('touchIcon').href = icon;
+  $('scName').textContent = name;
+  $('scIcon').src = icon;
+  // Safari limits replaceState; a slider can fire many times a second
+  clearTimeout(urlTimer);
+  urlTimer = setTimeout(() => { if (location.search !== '?' + query) history.replaceState(null, '', '?' + query); }, 250);
+  if (!manifestLink) return;
+  const m = { name, short_name: name, id: `./?${query}`, start_url: `${base}?${query}`, scope: base,
+    display: 'standalone', orientation: 'portrait', background_color: '#f4efe6', theme_color: '#f4efe6',
+    icons: [{ src: base + icon, sizes: '180x180', type: 'image/png' },
+            { src: base + 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+            { src: base + 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }] };
+  manifestLink.href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(m));
+}
+
+// A link (a shared URL or a home-screen shortcut) sets the whole setup
+function applyLink() {
+  const l = decode(location.search);
+  if (!l) return;
+  machine = l.machine;
+  custom[machine.id] = { ...l.pads };
+  store.set('custom', custom);
+  store.set('machine', machine.id);
+  engine.loadSeq({ name: l.name || l.beatName || 'Shared beat', bpm: l.bpm, swing: l.swing, lanes: l.lanes });
+  // A named link is a favorite: keep it in this app's list
+  if (l.name && favs.current()?.name !== l.name) favs.save(l.name);
+}
+
+function openHome() {
+  syncHome();
+  if (standalone) $('scHint').innerHTML = 'To save this beat as another app, copy its link, open it in <b>Safari</b>, then Share → <b>Add to Home Screen</b>.';
+  $('shareLink').hidden = !navigator.share;
+  $('homeSheet').showModal();
+}
+$('home').onclick = openHome;
+$('homeDone').onclick = () => $('homeSheet').close();
+$('copyLink').onclick = async () => {
+  try { await navigator.clipboard.writeText(shareUrl()); $('copyLink').textContent = 'Copied'; }
+  catch { prompt('Copy this link', shareUrl()); }
+  setTimeout(() => { $('copyLink').textContent = 'Copy link'; }, 2000);
+};
+$('shareLink').onclick = async () => {
+  try { await navigator.share({ title: `${linkState().name} · Drum Pads`, url: shareUrl() }); } catch {}
+};
 
 $('play').onclick = () => engine.togglePlay();
 $('rec').onclick = () => engine.toggleRecord();
@@ -344,7 +437,7 @@ $('fav').onclick = () => {
   } else {
     const base = engine.seq.name;
     const name = prompt('Name this favorite', `${base} · ${machine.name} · ${engine.seq.bpm}`)?.trim();
-    if (name) favs.save(name);
+    if (name) { favs.save(name); renderTransport(); openHome(); return; }
   }
   renderTransport();
 };
@@ -467,6 +560,7 @@ for (const d of document.querySelectorAll('dialog'))
 
 // ---------- start ----------
 buildPads();
+applyLink();
 renderTransport();
 setMachine(machine);
 if ('serviceWorker' in navigator) {

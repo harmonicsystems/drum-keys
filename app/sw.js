@@ -1,11 +1,14 @@
 // Drum Pads service worker.
 // - App shell: network first (so updates land), cache as the offline fallback.
 // - Samples from archive.org: cache first, kept forever — the sounds never change.
-const SHELL = 'shell-v1';
+const SHELL = 'shell-v2';
 const SAMPLES = 'samples-v1';
+const MACHINE_IDS = ['tr808', 'tr909', 'cr78', 'tr606', 'tr707', 'lm1', 'linndrum', 'dmx', 'drumulator', 'sp12',
+  'sp1200', 'mpc3000', 'sdsv', 'drumtraks', 'rx5', 'rhythmace'];
 const SHELL_FILES = [
-  './', './index.html', './machines.js', './machine-files.json', './manifest.webmanifest',
+  './', './machines.js', './link.js', './machine-files.json',
   './icon-192.png', './icon-512.png', './apple-touch-icon.png', '../engine.js',
+  ...MACHINE_IDS.map((id) => `./icons/${id}.png`),
 ];
 
 self.addEventListener('install', (e) => {
@@ -42,11 +45,13 @@ async function sample(req) {
 
 async function shell(req) {
   const cache = await caches.open(SHELL);
+  // Every shortcut is the same page with a different ?link: keep one copy of it
+  const key = req.mode === 'navigate' ? './' : req;
   try {
     const res = await fetch(req);
-    if (res.ok) cache.put(req, res.clone());
+    if (res.ok) cache.put(key, res.clone());
     return res;
   } catch {
-    return (await cache.match(req, { ignoreSearch: true })) || (req.mode === 'navigate' && cache.match('./index.html')) || Response.error();
+    return (await cache.match(key, { ignoreSearch: true })) || Response.error();
   }
 }
