@@ -1,0 +1,9 @@
+{
+  "name": "drum-keys",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "index": "node scripts/build-index.mjs",
+    "machines": "node scripts/build-machines.mjs"
+  }
+}

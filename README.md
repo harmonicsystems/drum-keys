@@ -56,6 +56,30 @@ reggae one drop, dembow, bossa nova, son clave, and an empty grid).
   the clock ticking in background tabs), so timing stays tight.
 - The current beat and lane keys are remembered in this browser.
 
+## Drum Pads — the mobile app (`app/`)
+
+A touch-first PWA with 16 famous machines and hand-picked pads: TR-808, TR-909,
+CR-78, TR-606, TR-707, LM-1, LinnDrum, DMX, Drumulator, SP-12, SP-1200, MPC3000,
+Simmons SDS-V, Drumtraks, RX5 and the Ace Tone Rhythm Ace.
+
+Open http://localhost:8000/app/ (or the deployed `/app/`), then "Add to Home
+Screen". 4×4 pads; tapping a pad also shows its 16 steps above the pads; hold a pad
+to swap its sound for any sample of that machine. Same beats, recording, count-in,
+metronome and undo as the desktop page — both import `engine.js`.
+
+- **Offline:** the service worker (`app/sw.js`) keeps every archive.org sample it
+  sees, so any machine you've opened works offline; "Save all offline" in the
+  machine list fetches all 16 (~224 sounds). Nothing is re-hosted.
+- **Curation** lives in `app/machines.js`. After editing it run
+  `node scripts/build-machines.mjs` — it checks every pad exists and writes
+  `app/machine-files.json` (the swap lists).
+- CR-78, Drumulator and SP-12 ship only numbered samples, so their pads were chosen
+  from spectrograms and are marked "pads by ear". Fix any by ear with a long-press,
+  then move the fix into `machines.js`.
+- Icons are drawn by `python3 scripts/make-icons.py`.
+- Bump `SHELL` in `sw.js` when the shell file list changes. A service worker needs
+  https (or localhost), so test on a phone via the deployed site.
+
 ## Rebuild the index
 
 ```bash

@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Drum Pads</title>
+<meta name="description" content="Finger-drum the most famous drum machines of all time.">
+<meta name="theme-color" content="#f4efe6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1e1b18" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Drum Pads">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  :root {
+    --bg: #f4efe6; --panel: #ebe4d8; --line: #d8cfbf; --ink: #3b342c; --muted: #8a7f70;
+    --key: #fbf8f2; --focus: #5d5346; --rec: #b5574d;
+    --k: #c07a5a; --s: #c9a14f; --c: #8fa37a; --r: #7c9a8e; --h: #7389a3; --o: #93a6c4;
+    --t: #9d7f9e; --y: #b8a47c; --p: #9b958b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1e1b18; --panel: #27231f; --line: #3a342d; --ink: #e8e0d3; --muted: #9a8f80;
+            --key: #2e2924; --focus: #d8cdbd; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.35 ui-rounded, -apple-system, system-ui, sans-serif;
+         -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
+  button, select, input { font: inherit; color: inherit; }
+  button { touch-action: manipulation; }
+
+  .app { display: flex; flex-direction: column; gap: 10px; height: 100dvh; max-width: 520px; margin: 0 auto;
+         padding: calc(env(safe-area-inset-top) + 10px) calc(env(safe-area-inset-right) + 14px)
+                  calc(env(safe-area-inset-bottom) + 12px) calc(env(safe-area-inset-left) + 14px); }
+
+  /* Header */
+  header { display: flex; align-items: center; gap: 6px; }
+  .nav { width: 40px; height: 44px; border: 0; background: none; color: var(--muted); font-size: 22px; cursor: pointer; }
+  #machineBtn { flex: 1; min-width: 0; border: 0; background: none; text-align: left; padding: 2px 4px; cursor: pointer; }
+  #machineBtn b { display: block; font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
+  #machineBtn span { color: var(--muted); font-size: 13px; }
+  #machineBtn span::after { content: '  ⌄'; font-size: 13px; }
+
+  /* Transport */
+  .bar { display: flex; gap: 8px; align-items: center; }
+  .btn { height: 40px; padding: 0 12px; border: 1px solid var(--line); background: var(--key); border-radius: 10px; cursor: pointer; white-space: nowrap; }
+  .btn.on { background: var(--focus); color: var(--bg); border-color: var(--focus); }
+  #play { flex: 1.3; font-weight: 600; }
+  #rec { flex: 1; color: var(--rec); }
+  #rec.on { background: var(--rec); color: var(--bg); border-color: var(--rec); }
+  #metro, #undo { flex: 1; }
+  select { height: 40px; flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--key); border-radius: 10px; padding: 0 8px; }
+  .bpm { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; background: var(--key); height: 40px; }
+  .bpm button { width: 34px; height: 100%; border: 0; background: none; font-size: 18px; color: var(--muted); cursor: pointer; }
+  .bpm input { width: 44px; border: 0; background: none; text-align: center; font: 15px ui-monospace, monospace; padding: 0; -moz-appearance: textfield; }
+  .bpm input::-webkit-inner-spin-button { -webkit-appearance: none; }
+  .swing { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; flex: 1; }
+  .swing input { flex: 1; min-width: 0; accent-color: var(--focus); }
+  #swingVal { font: 12px ui-monospace, monospace; width: 3ch; }
+
+  /* Steps for the selected pad */
+  .steps-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; color: var(--muted); }
+  .steps-head b { color: var(--ink); font-weight: 600; border-left: 3px solid var(--cat); padding-left: 6px; }
+  #steps { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; }
+  #steps.rec { outline: 2px solid var(--rec); outline-offset: 4px; border-radius: 6px; }
+  .step { height: 34px; border: 1px solid var(--line); border-radius: 6px; background: var(--key); padding: 0; cursor: pointer; }
+  .step.alt { background: var(--panel); }
+  .step.x { background: var(--cat); opacity: .8; }
+  .step.X { background: var(--cat); border-color: var(--ink); }
+  .step.g { background: var(--cat); opacity: .35; }
+  .step.now { box-shadow: inset 0 -3px 0 var(--focus); }
+
+  /* Pads */
+  #pads { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr);
+          gap: 8px; touch-action: none; max-height: 520px; }
+  .pad { position: relative; border: 1px solid var(--line); border-bottom: 5px solid var(--cat); border-radius: 12px;
+         background: var(--key); padding: 7px 8px; text-align: left; display: flex; flex-direction: column; justify-content: flex-end;
+         cursor: pointer; transition: background 160ms, transform 60ms; overflow: hidden; touch-action: none; }
+  .pad span { font-size: 12px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; }
+  .pad.sel { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .pad.hit { background: var(--cat); transform: scale(.97); transition: none; }
+  .pad.loading { opacity: .5; }
+  .pad.empty { opacity: .3; }
+  .pad.error span::after { content: ' · offline'; color: var(--rec); }
+
+  /* Sheets */
+  dialog { border: 0; padding: 0; background: var(--bg); color: var(--ink); width: min(520px, 100vw); max-width: 100vw;
+           max-height: 88dvh; margin: auto auto 0; border-radius: 18px 18px 0 0; box-shadow: 0 -8px 30px rgba(0,0,0,.18); }
+  dialog::backdrop { background: rgba(30, 27, 24, .35); }
+  .sheet { display: flex; flex-direction: column; max-height: 88dvh; }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px 8px; gap: 10px; }
+  .sheet-head h2 { margin: 0; font-size: 18px; font-weight: 650; }
+  .sheet-body { overflow-y: auto; padding: 6px 14px calc(env(safe-area-inset-bottom) + 18px); }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .card { border: 1px solid var(--line); background: var(--key); border-radius: 12px; padding: 10px 12px; text-align: left; cursor: pointer; }
+  .card.on { border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); }
+  .card b { display: block; font-size: 16px; }
+  .card small { color: var(--muted); font-size: 12px; display: block; }
+  .card p { margin: 6px 0 0; font-size: 12px; color: var(--muted); line-height: 1.3; }
+  .card .saved { float: right; font-size: 11px; color: var(--muted); }
+  .note { color: var(--muted); font-size: 13px; margin: 4px 4px 12px; }
+  .list { display: flex; flex-direction: column; gap: 4px; }
+  .list button { text-align: left; border: 1px solid var(--line); background: var(--key); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+  .list button.on { background: var(--focus); color: var(--bg); }
+  .credit { color: var(--muted); font-size: 12px; margin: 16px 4px 0; }
+  .credit a { color: inherit; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <button class="nav" id="prev" aria-label="Previous machine">‹</button>
+    <button id="machineBtn" aria-label="Choose machine"><b id="mName">…</b><span id="mMeta"></span></button>
+    <button class="nav" id="next" aria-label="Next machine">›</button>
+  </header>
+
+  <div class="bar">
+    <button class="btn" id="play">▶ Play</button>
+    <button class="btn" id="rec">● Rec</button>
+    <button class="btn" id="metro">Click</button>
+    <button class="btn" id="undo">Undo</button>
+  </div>
+  <div class="bar">
+    <select id="pattern" aria-label="Beat"></select>
+    <div class="bpm">
+      <button id="slower" aria-label="Slower">−</button>
+      <input id="bpm" type="number" inputmode="numeric" min="40" max="260" aria-label="Tempo (BPM)">
+      <button id="faster" aria-label="Faster">+</button>
+    </div>
+  </div>
+  <div class="bar">
+    <label class="swing">Swing <input id="swing" type="range" min="50" max="75" step="1"><span id="swingVal"></span></label>
+    <button class="btn" id="clear">Clear</button>
+  </div>
+
+  <div class="steps-head"><b id="laneName">Kick</b><span>tap steps · hold a pad to swap its sound</span></div>
+  <div id="steps"></div>
+
+  <div id="pads"></div>
+</div>
+
+<dialog id="picker">
+  <div class="sheet">
+    <div class="sheet-head"><h2>Machines</h2><button class="btn" id="saveAll">Save all offline</button></div>
+    <div class="sheet-body">
+      <p class="note" id="saveNote">Every machine you open is kept for offline use.</p>
+      <div class="cards" id="cards"></div>
+      <p class="credit">Samples streamed from the
+        <a href="https://archive.org/details/drum-machines-collection" target="_blank" rel="noopener">Internet Archive drum machines collection</a>.
+        Pads marked “by ear” come from unlabeled samples — hold a pad to choose another sound.</p>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="swap">
+  <div class="sheet">
+    <div class="sheet-head"><h2 id="swapTitle">Swap</h2><button class="btn" id="swapReset">Default</button></div>
+    <div class="sheet-body"><div class="list" id="swapList"></div></div>
+  </div>
+</dialog>
+
+<script type="module">
+import { sampleUrl, createEngine, makeStore, PRESETS, STEPS, NEXT } from '../engine.js';
+import { LANES, LAYOUT, MACHINES } from './machines.js';
+
+const $ = (id) => document.getElementById(id);
+const store = makeStore('drumpads.');
+const LANE = Object.fromEntries(LANES.map(([id, name, cat]) => [id, { name, cat }]));
+let machine = MACHINES.find((m) => m.id === store.get('machine')) || MACHINES[0];
+let custom = store.get('custom') || {};     // { machineId: { lane: file } }
+let lane = 'kick';                          // lane shown in the step strip
+let shownStep = -1;
+let machineFiles = null;                    // { id: [files] }, fetched lazily for the swap sheet
+
+// What a lane plays on the current machine: [file, label] or null
+function padOf(m, id) {
+  const own = custom[m.id]?.[id];
+  if (own) return [own, own.split('/').pop().replace(/\.(wav|aiff?)$/i, '')];
+  const p = m.pads[id];
+  if (!p) return null;
+  return Array.isArray(p) ? p : [p, LANE[id].name];
+}
+const urlOf = (m, file) => sampleUrl(m.zip, m.root + file);
+
+const engine = createEngine({
+  lanes: LANES.map(([id]) => id),
+  store,
+  resolve(id) {
+    const p = padOf(machine, id);
+    return p ? { url: urlOf(machine, p[0]), cat: LANE[id].cat } : null;
+  },
+  onChange() {
+    if (!engine.playing) { shownStep = -1; delete $('rec').dataset.counting; }
+    renderTransport();
+    renderSteps();
+  },
+  onDraw({ i, hits, count }) {
+    if (count) { $('rec').textContent = '● ' + count; $('rec').dataset.counting = 1; return; }
+    if ($('rec').dataset.counting) { delete $('rec').dataset.counting; renderTransport(); }
+    shownStep = i;
+    document.querySelectorAll('.step').forEach((s, n) => s.classList.toggle('now', n === i));
+    hits.forEach(flash);
+  },
+});
+
+// iOS: play through the silent switch, and unlock audio on the first touch
+if (navigator.audioSession) try { navigator.audioSession.type = 'playback'; } catch {}
+const unlock = () => engine.audio();
+document.addEventListener('touchend', unlock, { passive: true });
+document.addEventListener('pointerdown', unlock, { passive: true });
+
+// ---------- pads ----------
+const pads = {};
+function buildPads() {
+  for (const row of LAYOUT) for (const id of row) {
+    const pad = document.createElement('button');
+    pad.className = 'pad';
+    pad.style.setProperty('--cat', `var(--${LANE[id].cat})`);
+    pad.innerHTML = '<span></span>';
+    let hold;
+    pad.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      hit(id);
+      clearTimeout(hold);
+      hold = setTimeout(() => openSwap(id), 550);
+    });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) pad.addEventListener(ev, () => clearTimeout(hold));
+    pad.addEventListener('contextmenu', (e) => e.preventDefault());
+    pads[id] = pad;
+    $('pads').append(pad);
+  }
+}
+
+function hit(id) {
+  const p = padOf(machine, id);
+  if (!p) return;
+  engine.play(urlOf(machine, p[0]), LANE[id].cat, 0.8);
+  flash(id);
+  if (engine.recording && engine.playing) engine.recordHit(id, false);
+  if (lane !== id) { lane = id; renderSteps(); renderPads(); }
+}
+
+function flash(id) {
+  const pad = pads[id];
+  pad.classList.add('hit');
+  clearTimeout(pad._t);
+  pad._t = setTimeout(() => pad.classList.remove('hit'), 90);
+}
+
+function renderPads() {
+  for (const [id] of LANES) {
+    const pad = pads[id], p = padOf(machine, id);
+    pad.classList.toggle('sel', id === lane);
+    pad.classList.toggle('empty', !p);
+    pad.classList.remove('error');
+    pad.querySelector('span').textContent = p ? p[1] : '';
+    if (!p) continue;
+    pad.classList.add('loading');
+    const m = machine;
+    engine.load(urlOf(m, p[0])).then(
+      () => { if (m === machine) pad.classList.remove('loading'); },
+      () => { if (m === machine) { pad.classList.remove('loading'); pad.classList.add('error'); } },
+    );
+  }
+}
+
+// ---------- step strip ----------
+function renderSteps() {
+  const box = $('steps');
+  box.innerHTML = '';
+  box.classList.toggle('rec', engine.recording);
+  const cat = `var(--${LANE[lane].cat})`;
+  $('laneName').textContent = padOf(machine, lane)?.[1] ?? LANE[lane].name;
+  $('laneName').style.setProperty('--cat', cat);
+  const row = engine.seq.lanes[lane];
+  for (let i = 0; i < STEPS; i++) {
+    const v = row[i];
+    const b = document.createElement('button');
+    b.className = 'step' + (v !== '.' ? ' ' + v : '') + ((i >> 2) % 2 ? ' alt' : '') + (i === shownStep ? ' now' : '');
+    b.style.setProperty('--cat', cat);
+    b.setAttribute('aria-label', `Step ${i + 1}`);
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const next = NEXT[engine.seq.lanes[lane][i]];
+      engine.setStep(lane, i, next);
+      if (!engine.playing && next !== '.') flash(lane);
+    });
+    box.append(b);
+  }
+}
+
+// ---------- transport ----------
+function renderTransport() {
+  const seq = engine.seq;
+  $('pattern').innerHTML = (seq.edited ? `<option value="" selected>${seq.name} (edited)</option>` : '') +
+    PRESETS.map((p) => `<option${!seq.edited && p.name === seq.name ? ' selected' : ''}>${p.name}</option>`).join('');
+  $('bpm').value = seq.bpm;
+  $('swing').value = seq.swing;
+  $('swingVal').textContent = seq.swing + '%';
+  $('play').textContent = engine.playing ? '■ Stop' : '▶ Play';
+  $('play').classList.toggle('on', engine.playing);
+  $('rec').classList.toggle('on', engine.recording);
+  if (!$('rec').dataset.counting) $('rec').textContent = '● Rec';
+  $('metro').classList.toggle('on', engine.metronome);
+  $('steps').classList.toggle('rec', engine.recording);
+}
+
+$('play').onclick = () => engine.togglePlay();
+$('rec').onclick = () => engine.toggleRecord();
+$('metro').onclick = () => engine.setMetronome(!engine.metronome);
+$('undo').onclick = () => engine.undo();
+$('clear').onclick = () => engine.clear();
+$('pattern').onchange = (e) => { if (e.target.value) engine.loadPreset(e.target.value); e.target.blur(); };
+$('bpm').onchange = (e) => { engine.setBpm(+e.target.value); e.target.blur(); };
+$('slower').onclick = () => engine.setBpm(engine.seq.bpm - 1);
+$('faster').onclick = () => engine.setBpm(engine.seq.bpm + 1);
+$('swing').oninput = (e) => { engine.setSwing(+e.target.value); $('swingVal').textContent = engine.seq.swing + '%'; };
+$('swing').onchange = () => renderTransport();
+
+// ---------- machines ----------
+function setMachine(m) {
+  machine = m;
+  store.set('machine', m.id);
+  engine.chokeAll();
+  $('mName').textContent = m.name;
+  $('mMeta').textContent = `${m.maker} · ${m.year}${m.guessed ? ' · pads by ear' : ''}`;
+  renderPads();
+  renderSteps();
+}
+
+function stepMachine(dir) {
+  const i = MACHINES.indexOf(machine);
+  setMachine(MACHINES[(i + dir + MACHINES.length) % MACHINES.length]);
+}
+$('prev').onclick = () => stepMachine(-1);
+$('next').onclick = () => stepMachine(1);
+
+// Swipe the header left/right to change machine
+let swipeX = null;
+document.querySelector('header').addEventListener('pointerdown', (e) => { swipeX = e.clientX; });
+document.querySelector('header').addEventListener('pointerup', (e) => {
+  if (swipeX != null && Math.abs(e.clientX - swipeX) > 50) stepMachine(e.clientX < swipeX ? 1 : -1);
+  swipeX = null;
+});
+
+const padUrls = (m) => LANES.map(([id]) => padOf(m, id)).filter(Boolean).map((p) => urlOf(m, p[0]));
+
+// How many of a machine's pads are in the service worker's sample cache
+async function savedCount(m) {
+  if (!('caches' in window)) return 0;
+  const cache = await caches.open('samples-v1');
+  const hits = await Promise.all(padUrls(m).map((u) => cache.match(u)));
+  return hits.filter(Boolean).length;
+}
+
+async function renderCards() {
+  const box = $('cards');
+  box.innerHTML = '';
+  for (const m of MACHINES) {
+    const card = document.createElement('button');
+    card.className = 'card' + (m === machine ? ' on' : '');
+    card.innerHTML = `<span class="saved"></span><b>${m.name}</b><small>${m.maker} · ${m.year}</small><p>${m.note}</p>`;
+    card.onclick = () => { setMachine(m); $('picker').close(); };
+    box.append(card);
+    savedCount(m).then((n) => {
+      const total = padUrls(m).length;
+      card.querySelector('.saved').textContent = n >= total ? 'offline ✓' : '';
+    });
+  }
+}
+
+$('machineBtn').onclick = () => { renderCards(); $('picker').showModal(); };
+$('saveAll').onclick = async () => {
+  const urls = MACHINES.flatMap(padUrls);
+  let done = 0;
+  $('saveAll').disabled = true;
+  // A few at a time: archive.org is happier that way
+  const queue = [...urls];
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (queue.length) {
+      const u = queue.shift();
+      try { await fetch(u); } catch {}
+      $('saveNote').textContent = `Saving ${++done} of ${urls.length} sounds…`;
+    }
+  }));
+  $('saveNote').textContent = 'All machines saved for offline use.';
+  $('saveAll').disabled = false;
+  renderCards();
+};
+
+// ---------- swap sheet (hold a pad) ----------
+let swapping = null;
+async function openSwap(id) {
+  swapping = id;
+  machineFiles ??= await fetch('machine-files.json').then((r) => r.json()).catch(() => ({}));
+  const files = machineFiles[machine.id] || [];
+  const current = padOf(machine, id)?.[0];
+  $('swapTitle').textContent = `${machine.name} · ${LANE[id].name}`;
+  const list = $('swapList');
+  list.innerHTML = '';
+  for (const f of files) {
+    const b = document.createElement('button');
+    b.textContent = f.replace(/\.(wav|aiff?)$/i, '');
+    b.className = f === current ? 'on' : '';
+    b.onclick = () => {
+      (custom[machine.id] ??= {})[id] = f;
+      store.set('custom', custom);
+      list.querySelector('.on')?.classList.remove('on');
+      b.classList.add('on');
+      hit(id);
+      renderPads();
+    };
+    list.append(b);
+  }
+  $('swap').showModal();
+  list.querySelector('.on')?.scrollIntoView({ block: 'center' });
+}
+$('swapReset').onclick = () => {
+  if (custom[machine.id]) delete custom[machine.id][swapping];
+  store.set('custom', custom);
+  renderPads();
+  $('swap').close();
+};
+// Tap the backdrop to close a sheet
+for (const d of document.querySelectorAll('dialog'))
+  d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
+
+// ---------- start ----------
+buildPads();
+renderTransport();
+setMachine(machine);
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js');
+  // Sounds fetched before the worker took over (first visit) aren't in its
+  // cache yet; fetch the open machine's pads again through it.
+  const warm = () => padUrls(machine).forEach((u) => fetch(u).catch(() => {}));
+  if (!navigator.serviceWorker.controller) navigator.serviceWorker.addEventListener('controllerchange', warm, { once: true });
+}
+</script>
+</body>
+</html>
