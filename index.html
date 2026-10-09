@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drum Keys</title>
+<style>
+  :root {
+    --bg: #f4efe6; --panel: #ebe4d8; --line: #d8cfbf; --ink: #3b342c; --muted: #8a7f70;
+    --key: #fbf8f2; --focus: #5d5346;
+    --k: #c07a5a; --s: #c9a14f; --c: #8fa37a; --r: #7c9a8e; --h: #7389a3; --o: #93a6c4;
+    --t: #9d7f9e; --y: #b8a47c; --p: #9b958b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1e1b18; --panel: #27231f; --line: #3a342d; --ink: #e8e0d3; --muted: #9a8f80;
+            --key: #2e2924; --focus: #d8cdbd; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--ink); font: 14px/1.4 ui-rounded, -apple-system, system-ui, sans-serif;
+         display: grid; grid-template-columns: 260px 1fr; }
+  button { font: inherit; color: inherit; }
+
+  /* Kit list */
+  aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; height: 100vh; }
+  aside input { margin: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--key); color: var(--ink); font: inherit; }
+  #kits { list-style: none; margin: 0; padding: 0 0 12px; overflow-y: auto; flex: 1; }
+  #kits li { padding: 5px 16px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+  #kits li span { color: var(--muted); font: 12px ui-monospace, monospace; }
+  #kits li:hover { background: var(--line); }
+  #kits li.on { background: var(--focus); color: var(--bg); }
+  #kits li.on span { color: var(--bg); opacity: .7; }
+
+  main { padding: 24px 32px; overflow-y: auto; height: 100vh; }
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0; font-weight: 600; }
+  #meta { color: var(--muted); font: 12px ui-monospace, monospace; }
+  .spacer { flex: 1; }
+  label.vol { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+  .btn { border: 1px solid var(--line); background: var(--key); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+  .btn:hover { border-color: var(--muted); }
+
+  /* Keyboard */
+  #board { display: flex; flex-direction: column; gap: 8px; user-select: none; }
+  .row { display: flex; gap: 8px; }
+  .row:nth-child(2) { margin-left: 30px; } .row:nth-child(3) { margin-left: 45px; } .row:nth-child(4) { margin-left: 70px; }
+  .pad { width: 76px; height: 76px; border-radius: 10px; background: var(--key); border: 1px solid var(--line);
+         border-bottom: 4px solid var(--cat, var(--line)); padding: 6px 7px; cursor: pointer; text-align: left;
+         display: flex; flex-direction: column; justify-content: space-between; transition: transform 60ms, background 160ms; }
+  .pad b { font: 600 15px ui-monospace, monospace; }
+  .pad small { font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pad.empty { opacity: .35; cursor: default; }
+  .pad.loading { opacity: .55; }
+  .pad.error small { color: var(--k); }
+  .pad.hit { background: var(--cat); transform: translateY(2px); transition: none; }
+  .pad.hit small { color: var(--ink); }
+  .pad.sel { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .hint { color: var(--muted); margin: 18px 0 0; font-size: 13px; }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; background: var(--key); }
+
+  /* Sample browser */
+  #browser { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 16px; }
+  #browser h2 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+  #browser h3 { font-size: 12px; margin: 14px 0 6px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .05em; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--line); border-left: 3px solid var(--cat); background: var(--key); border-radius: 6px;
+          padding: 3px 8px; cursor: pointer; font-size: 12px; }
+  .chip:hover { border-color: var(--muted); border-left-color: var(--cat); }
+  .chip.on { background: var(--focus); color: var(--bg); }
+
+  /* Sequencer */
+  #seq { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 16px; }
+  .transport { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; color: var(--muted); }
+  .transport label { display: flex; align-items: center; gap: 6px; }
+  .transport select, .transport input[type=number] { font: inherit; color: var(--ink); background: var(--key);
+    border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; }
+  .transport input[type=number] { width: 64px; font-family: ui-monospace, monospace; }
+  #swingVal { font: 12px ui-monospace, monospace; width: 3ch; }
+  #play { min-width: 84px; font-weight: 600; color: var(--ink); }
+  #play.on { background: var(--focus); color: var(--bg); border-color: var(--focus); }
+  #grid { display: grid; grid-template-columns: 150px repeat(16, minmax(14px, 1fr)); gap: 3px; max-width: 900px; user-select: none; }
+  .lane { display: flex; align-items: center; gap: 6px; padding: 0 6px; border: 0; background: none; cursor: pointer;
+          text-align: left; min-width: 0; border-left: 3px solid var(--cat, var(--line)); }
+  .lane kbd { flex: none; }
+  .lane span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .lane span i { color: var(--muted); font-style: normal; }
+  .lane.bind { background: var(--focus); color: var(--bg); border-radius: 6px; }
+  .cell { height: 26px; border: 1px solid var(--line); border-radius: 4px; background: var(--key); cursor: pointer; padding: 0; }
+  .cell.alt { background: var(--panel); }
+  .cell.beat { margin-left: 4px; }
+  .cell.x { background: var(--cat); opacity: .75; }
+  .cell.X { background: var(--cat); border-color: var(--ink); }
+  .cell.g { background: var(--cat); opacity: .35; }
+  .cell.now { box-shadow: inset 0 -3px 0 var(--focus); }
+
+  @media (max-width: 760px) {
+    #grid { grid-template-columns: 72px repeat(16, 1fr); gap: 2px; }
+    .lane span i { display: none; }
+    .cell { height: 22px; } .cell.beat { margin-left: 2px; }
+    body { grid-template-columns: 1fr; }
+    aside { height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    main { height: auto; padding: 16px; }
+    .pad { width: 9vw; height: 9vw; min-width: 30px; min-height: 40px; padding: 3px; }
+    .pad small { display: none; }
+    .row { gap: 4px; } .row:nth-child(n) { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+<aside>
+  <input id="search" type="search" placeholder="Search 470 machines…" autocomplete="off" spellcheck="false">
+  <ul id="kits"></ul>
+</aside>
+<main>
+  <header>
+    <h1 id="kitName">Loading kits…</h1>
+    <span id="meta"></span>
+    <span class="spacer"></span>
+    <label class="vol">Volume <input id="vol" type="range" min="0" max="1" step="0.01" value="0.8"></label>
+    <button class="btn" id="reset" title="Back to the automatic key layout">Reset kit</button>
+  </header>
+  <div id="board"></div>
+  <p class="hint">
+    Play with your keyboard · <kbd>Shift</kbd> accent · <kbd>←</kbd> <kbd>→</kbd> change machine ·
+    click a pad to choose its sample, then <kbd>[</kbd> <kbd>]</kbd> to step through similar sounds
+  </p>
+  <section id="seq">
+    <div class="transport">
+      <button class="btn" id="play">▶ Play</button>
+      <label>Beat <select id="pattern"></select></label>
+      <label>BPM <input id="bpm" type="number" min="40" max="260" step="1"></label>
+      <label>Swing <input id="swing" type="range" min="50" max="75" step="1"><span id="swingVal"></span></label>
+      <button class="btn" id="clear">Clear</button>
+    </div>
+    <div id="grid"></div>
+    <p class="hint">
+      <kbd>Space</kbd> play / stop · click a step: on → accent → ghost → off · right-click clears ·
+      click a lane name, then press a key to give it that pad’s sound. Switch machines while it plays.
+    </p>
+  </section>
+  <section id="browser" hidden></section>
+</main>
+
+<script>
+const ITEM = 'https://archive.org/download/drum-machines-collection/';
+const CAT_NAMES = { k: 'Kick', s: 'Snare', c: 'Clap', r: 'Rim', h: 'Closed hat', o: 'Open hat', t: 'Tom', y: 'Cymbal', p: 'Perc / other' };
+const CAT_ORDER = 'kschotyrp';
+
+// Rows of [KeyboardEvent.code, label, preferred category]
+const ROWS = [
+  [...'1234567890'].map((d) => ['Digit' + d, d, 'y']),
+  [...'QWERTYUIOP'].map((l) => ['Key' + l, l, 't']),
+  [...'ASDF'].map((l) => ['Key' + l, l, 'h']).concat([...'GH'].map((l) => ['Key' + l, l, 'o']),
+    [...'JKL'].map((l) => ['Key' + l, l, 'p']), [['Semicolon', ';', 'p']]),
+  [...'ZXCV'].map((l) => ['Key' + l, l, 'k']).concat([...'BNM'].map((l) => ['Key' + l, l, 's']),
+    [['Comma', ',', 'c'], ['Period', '.', 'r']]),
+];
+const SLOTS = ROWS.flat();
+// Where a slot looks when its own category has run out
+const FALLBACK = { k: 'p', s: 'rcp', c: 'rsp', r: 'csp', h: 'op', o: 'hyp', t: 'p', y: 'op', p: 'tyrc' };
+
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem('drum.' + k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem('drum.' + k, JSON.stringify(v)); } catch {} },
+};
+
+let kits = [], kit = null, map = {}, selected = null;
+let ctx, master;
+const buffers = new Map();   // url -> Promise<AudioBuffer>
+const ready = new Map();     // url -> AudioBuffer, once decoded (the sequencer only plays these)
+const openHats = new Set();  // live voices that a closed hat should choke
+
+const $ = (id) => document.getElementById(id);
+const urlFor = (k, file) => ITEM + encodeURIComponent(k.zip) + '/' + encodeURIComponent(k.root + file);
+const short = (file) => file.split('/').pop().replace(/\.(wav|aiff?)$/i, '');
+const catOf = (k, file) => k.cats[k.files.indexOf(file)] || 'p';
+
+// ---------- audio ----------
+function audio() {
+  if (!ctx) {
+    ctx = new AudioContext({ latencyHint: 'interactive' });
+    master = ctx.createGain();
+    master.gain.value = +$('vol').value;
+    master.connect(ctx.destination);
+  }
+  if (ctx.state === 'suspended') ctx.resume();
+  return ctx;
+}
+
+function load(url) {
+  if (!buffers.has(url)) {
+    const p = fetch(url)
+      .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+      .then((data) => audio().decodeAudioData(data))
+      .then((buf) => { ready.set(url, buf); return buf; });
+    p.catch(() => buffers.delete(url)); // allow a retry later
+    buffers.set(url, p);
+  }
+  return buffers.get(url);
+}
+
+// Start one sample at audio time `when` (now if omitted). A closed hat chokes
+// any open hat that has already started by then.
+function voice(buf, cat, level, when = 0) {
+  const ac = audio();
+  const t = Math.max(when, ac.currentTime);
+  if (cat === 'h') for (const v of openHats) v.choke(t);
+
+  const src = ac.createBufferSource();
+  const gain = ac.createGain();
+  src.buffer = buf;
+  gain.gain.value = level;
+  src.connect(gain).connect(master);
+  src.start(t);
+  if (cat === 'o') {
+    const v = { start: t, choke(at) {
+      if (at < v.start) return;
+      gain.gain.setValueAtTime(level, at);
+      gain.gain.linearRampToValueAtTime(0, at + 0.01);
+      src.stop(at + 0.02);
+      openHats.delete(v);
+    } };
+    openHats.add(v);
+    src.onended = () => openHats.delete(v);
+  }
+}
+
+async function play(file, level) {
+  let buf;
+  try { buf = await load(urlFor(kit, file)); } catch { return; }
+  voice(buf, catOf(kit, file), level);
+}
+
+// ---------- mapping ----------
+function autoMap(k) {
+  const pools = {};
+  for (const c of CAT_ORDER) pools[c] = [];
+  k.files.forEach((f, i) => pools[k.cats[i]].push(f));
+  const used = new Set(), out = {};
+  const need = {};
+  for (const [, , c] of SLOTS) need[c] = (need[c] || 0) + 1;
+
+  // Spread picks across a big pool so a kit with 100 kicks gives 4 distinct ones
+  const picks = {};
+  for (const c in need) {
+    const pool = pools[c], n = Math.min(need[c], pool.length);
+    picks[c] = Array.from({ length: n }, (_, i) => pool[Math.floor(i * pool.length / n)]);
+  }
+  const take = (c) => {
+    while (picks[c]?.length) { const f = picks[c].shift(); if (!used.has(f)) return f; }
+    return pools[c].find((f) => !used.has(f));
+  };
+  // Every key claims from its own category first; only then do empty keys
+  // borrow, so the cymbal row can't steal the open hats meant for G/H.
+  for (const [code, , c] of SLOTS) {
+    const f = take(c);
+    if (f) { used.add(f); out[code] = f; }
+  }
+  for (const [code, , c] of SLOTS) {
+    if (out[code]) continue;
+    let f;
+    for (const alt of FALLBACK[c]) f ??= take(alt);
+    f ??= k.files.find((x) => !used.has(x));
+    if (f) { used.add(f); out[code] = f; }
+  }
+  return out;
+}
+
+function saveMap() {
+  const auto = autoMap(kit);
+  const diff = {};
+  for (const code in map) if (map[code] !== auto[code]) diff[code] = map[code];
+  store.set('map.' + kit.name, Object.keys(diff).length ? diff : null);
+}
+
+// ---------- UI ----------
+const pads = {};
+function buildBoard() {
+  const board = $('board');
+  for (const row of ROWS) {
+    const el = document.createElement('div');
+    el.className = 'row';
+    for (const [code, label] of row) {
+      const pad = document.createElement('button');
+      pad.className = 'pad';
+      pad.innerHTML = `<b>${label}</b><small></small>`;
+      pad.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        trigger(code, e.shiftKey);
+        if (binding) { laneKeys[binding] = code; store.set('laneKeys', laneKeys); binding = null; renderGrid(); return; }
+        select(code);
+      });
+      pads[code] = pad;
+      el.append(pad);
+    }
+    board.append(el);
+  }
+}
+
+function renderPads() {
+  for (const [code] of SLOTS) {
+    const pad = pads[code], file = map[code];
+    pad.classList.toggle('empty', !file);
+    pad.classList.toggle('sel', code === selected);
+    pad.classList.remove('error');
+    pad.style.setProperty('--cat', file ? `var(--${catOf(kit, file)})` : 'var(--line)');
+    pad.querySelector('small').textContent = file ? short(file) : '';
+    pad.title = file || '';
+    if (!file) continue;
+    const url = urlFor(kit, file);
+    pad.classList.add('loading');
+    load(url).then(
+      () => { if (map[code] === file) pad.classList.remove('loading'); },
+      () => { if (map[code] === file) { pad.classList.remove('loading'); pad.classList.add('error'); pad.querySelector('small').textContent = 'can’t play'; } },
+    );
+  }
+  renderGrid();
+}
+
+function trigger(code, accent) {
+  const file = map[code];
+  if (!file) return;
+  play(file, accent ? 1 : 0.7);
+  flash(code);
+}
+
+function flash(code) {
+  const pad = pads[code];
+  pad.classList.add('hit');
+  clearTimeout(pad._t);
+  pad._t = setTimeout(() => pad.classList.remove('hit'), 90);
+}
+
+function select(code) {
+  selected = selected === code ? null : code;
+  renderPads();
+  renderBrowser();
+}
+
+function renderBrowser() {
+  const box = $('browser');
+  if (!selected || !kit) { box.hidden = true; return; }
+  box.hidden = false;
+  const label = SLOTS.find((s) => s[0] === selected)[1];
+  const groups = {};
+  kit.files.forEach((f, i) => (groups[kit.cats[i]] ??= []).push(f));
+  box.innerHTML = `<h2>Key ${label}: ${map[selected] ? short(map[selected]) : 'empty'}</h2>
+    <p class="hint" style="margin:0">Click a sample to hear it and put it on this key.</p>`;
+  for (const c of CAT_ORDER) {
+    if (!groups[c]) continue;
+    const h = document.createElement('h3');
+    h.textContent = `${CAT_NAMES[c]} (${groups[c].length})`;
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    for (const f of groups[c]) {
+      const chip = document.createElement('button');
+      chip.className = 'chip' + (f === map[selected] ? ' on' : '');
+      chip.style.setProperty('--cat', `var(--${c})`);
+      chip.textContent = f.includes('/') ? f.replace(/\.(wav|aiff?)$/i, '') : short(f);
+      chip.onclick = () => assign(f);
+      chips.append(chip);
+    }
+    box.append(h, chips);
+  }
+}
+
+function assign(file) {
+  map[selected] = file;
+  saveMap();
+  renderPads();
+  renderBrowser();
+  trigger(selected, false);
+}
+
+// [ / ]: step the selected key through samples of the same category
+function cycle(dir) {
+  const code = selected ?? lastHit;
+  if (!code || !map[code]) return;
+  selected = code;
+  const cat = catOf(kit, map[code]);
+  const pool = kit.files.filter((_, i) => kit.cats[i] === cat);
+  const i = pool.indexOf(map[code]);
+  assign(pool[(i + dir + pool.length) % pool.length]);
+}
+
+function renderKitList() {
+  const q = $('search').value.trim().toLowerCase();
+  const ul = $('kits');
+  ul.innerHTML = '';
+  for (const k of kits) {
+    if (q && !k.name.toLowerCase().includes(q)) continue;
+    const li = document.createElement('li');
+    li.innerHTML = `${k.name.replace(/&/g, '&amp;').replace(/</g, '&lt;')}<span>${k.files.length}</span>`;
+    li.className = k === kit ? 'on' : '';
+    li.onclick = () => setKit(k);
+    k.li = li;
+    ul.append(li);
+  }
+}
+
+function setKit(k) {
+  if (kit?.li) kit.li.className = '';
+  kit = k;
+  map = { ...autoMap(k), ...(store.get('map.' + k.name) || {}) };
+  if (ctx) for (const v of openHats) v.choke(ctx.currentTime);
+  store.set('kit', k.name);
+  $('kitName').textContent = k.name;
+  const counts = {};
+  for (const c of k.cats) counts[c] = (counts[c] || 0) + 1;
+  $('meta').textContent = `${k.files.length} samples · ` +
+    CAT_ORDER.split('').filter((c) => counts[c]).map((c) => `${counts[c]} ${CAT_NAMES[c].toLowerCase()}`).join(', ');
+  if (k.li) { k.li.className = 'on'; k.li.scrollIntoView({ block: 'nearest' }); }
+  renderPads();
+  renderBrowser();
+}
+
+function stepKit(dir) {
+  const q = $('search').value.trim().toLowerCase();
+  const list = q ? kits.filter((k) => k.name.toLowerCase().includes(q)) : kits;
+  if (!list.length) return;
+  const i = list.indexOf(kit);
+  setKit(list[(i + dir + list.length) % list.length]);
+}
+
+// ---------- sequencer ----------
+// Lanes play keys, not samples, so a beat follows whatever kit is loaded.
+// Order matters: closed hat is scheduled before open hat within a step.
+const LANES = [
+  ['kick', 'Kick', 'KeyZ'], ['snare', 'Snare', 'KeyB'], ['clap', 'Clap', 'Comma'], ['rim', 'Rim', 'Period'],
+  ['chh', 'Closed hat', 'KeyA'], ['ohh', 'Open hat', 'KeyG'], ['tom1', 'Tom 1', 'KeyQ'], ['tom2', 'Tom 2', 'KeyW'],
+  ['tom3', 'Tom 3', 'KeyE'], ['cym', 'Cymbal', 'Digit1'], ['perc1', 'Perc 1', 'KeyJ'], ['perc2', 'Perc 2', 'KeyK'],
+];
+const STEPS = 16;
+const LEVEL = { g: 0.3, x: 0.7, X: 1 };   // ghost, hit, accent
+const NEXT = { '.': 'x', x: 'X', X: 'g', g: '.' };
+
+// Classic patterns, one bar of 16ths. x hit, X accent, g ghost, . rest
+const PRESETS = [
+  { name: 'Rock', bpm: 110, swing: 50, lanes: {
+    kick: 'X.......x.x.....', snare: '....X.......X...', chh: 'x.x.x.x.x.x.x.x.', cym: 'x...............' } },
+  { name: 'Disco', bpm: 118, swing: 50, lanes: {
+    kick: 'X...X...X...X...', snare: '....x.......x...', chh: 'xx.xxx.xxx.xxx.x', ohh: '..x...x...x...x.' } },
+  { name: 'House', bpm: 124, swing: 52, lanes: {
+    kick: 'X...X...X...X...', clap: '....x.......x...', ohh: '..x...x...x...x.', perc2: 'g.g.g.g.g.g.g.g.' } },
+  { name: 'Techno', bpm: 132, swing: 50, lanes: {
+    kick: 'X...X...X...X...', clap: '....x.......x...', chh: 'gg.ggg.ggg.ggg.g', ohh: '..x...x...x...x.', rim: '...x.....x..x...' } },
+  { name: 'Electro', bpm: 126, swing: 50, lanes: {
+    kick: 'X.....x.....x...', clap: '....X.......X...', chh: 'x.x.x.x.x.x.x.x.', perc2: 'x..x..x...x..x..' } },
+  { name: 'Miami bass', bpm: 132, swing: 50, lanes: {
+    kick: 'X......x..X.....', clap: '....X.......X...', chh: 'xgxgxgxgxgxgxgxg', tom1: '..............x.' } },
+  { name: 'Boom bap', bpm: 90, swing: 58, lanes: {
+    kick: 'X......x..x.....', snare: '....X.......X...', chh: 'x.x.x.x.x.x.x.x.', ohh: '..............x.' } },
+  { name: 'Funk', bpm: 100, swing: 54, lanes: {
+    kick: 'X.x.......x..x..', snare: '....X..g.g..X..g', chh: 'xxxxxxx.xxxxx.xx', ohh: '.......x.....x..' } },
+  { name: 'Breakbeat', bpm: 136, swing: 50, lanes: {
+    kick: 'X.x.......xx....', snare: '....X..g.g..X..g', cym: 'x.x.x.x.x.x.x.x.' } },
+  { name: 'New jack swing', bpm: 104, swing: 62, lanes: {
+    kick: 'X..x..x...x..x..', snare: '....X.......X...', chh: 'x.xxx.xxx.xxx.xx' } },
+  { name: 'Shuffle', bpm: 92, swing: 67, lanes: {
+    kick: 'X.....x.X.....x.', snare: '....X.......X...', chh: 'X.xxX.xxX.xxX.xx' } },
+  { name: 'Trap', bpm: 140, swing: 50, lanes: {
+    kick: 'X.....x...x....x', clap: '........X.......', chh: 'xgxgxgxgxxxxxgxg', ohh: '.......x........' } },
+  { name: 'Drum & bass', bpm: 172, swing: 50, lanes: {
+    kick: 'X.........X.....', snare: '....X..g.g..X...', chh: 'x.x.x.x.x.x.x.x.' } },
+  { name: 'Reggae one drop', bpm: 76, swing: 62, lanes: {
+    kick: '........X.......', rim: '........x.......', chh: 'x.x.x.x.x.x.x.x.' } },
+  { name: 'Dembow', bpm: 96, swing: 50, lanes: {
+    kick: 'X...X...X...X...', snare: '...x..x....x..x.', chh: 'x.x.x.x.x.x.x.x.' } },
+  { name: 'Bossa nova', bpm: 128, swing: 50, lanes: {
+    kick: 'X..xX..xX..xX..x', rim: 'x..x..x...x..x..', chh: 'gggggggggggggggg' } },
+  { name: 'Son clave 3-2', bpm: 104, swing: 50, lanes: {
+    kick: 'X...X...X...X...', rim: 'x..x..x...x.x...', perc2: 'x.x.x.x.x.x.x.x.', tom1: '......x.......x.' } },
+  { name: 'Empty', bpm: 120, swing: 50, lanes: {} },
+];
+
+const fromPreset = (p) => ({
+  name: p.name, edited: false, bpm: p.bpm, swing: p.swing,
+  lanes: Object.fromEntries(LANES.map(([id]) => [id, (p.lanes[id] || '').padEnd(STEPS, '.').slice(0, STEPS)])),
+});
+let seq = store.get('seq') || fromPreset(PRESETS[0]);
+const laneKeys = { ...Object.fromEntries(LANES.map(([id, , code]) => [id, code])), ...store.get('laneKeys') };
+let binding = null;          // lane waiting for a key press
+let playing = false, step = 0, nextTime = 0, shownStep = -1;
+const drawQueue = [];        // {i, t, hits} in audio time, drained by the animation loop
+let cells = [];              // cells[step] -> elements in that column
+
+function saveSeq() { store.set('seq', seq); }
+
+function renderTransport() {
+  // An edited beat gets its own entry, so picking the original reverts to it
+  $('pattern').innerHTML = (seq.edited ? `<option value="" selected>${seq.name} (edited)</option>` : '') +
+    PRESETS.map((p) => `<option${!seq.edited && p.name === seq.name ? ' selected' : ''}>${p.name}</option>`).join('');
+  $('bpm').value = seq.bpm;
+  $('swing').value = seq.swing;
+  $('swingVal').textContent = seq.swing + '%';
+  $('play').textContent = playing ? '■ Stop' : '▶ Play';
+  $('play').classList.toggle('on', playing);
+}
+
+function renderGrid() {
+  const grid = $('grid');
+  grid.innerHTML = '';
+  cells = Array.from({ length: STEPS }, () => []);
+  for (const [id, name] of LANES) {
+    const code = laneKeys[id];
+    const file = kit && map[code];
+    const cat = file ? `var(--${catOf(kit, file)})` : 'var(--line)';
+    const lane = document.createElement('button');
+    lane.className = 'lane' + (binding === id ? ' bind' : '');
+    lane.style.setProperty('--cat', cat);
+    const keyLabel = SLOTS.find((s) => s[0] === code)?.[1] ?? '?';
+    lane.innerHTML = binding === id ? '<span>Press a key…</span>'
+      : `<kbd>${keyLabel}</kbd><span>${name} <i>${file ? short(file) : ''}</i></span>`;
+    lane.title = 'Click, then press a key to use that pad’s sound';
+    lane.onclick = () => { binding = binding === id ? null : id; renderGrid(); };
+    grid.append(lane);
+
+    for (let i = 0; i < STEPS; i++) {
+      const v = seq.lanes[id][i];
+      const cell = document.createElement('button');
+      cell.className = 'cell' + (v !== '.' ? ' ' + v : '') + ((i >> 2) % 2 ? ' alt' : '') +
+        (i % 4 === 0 && i ? ' beat' : '') + (i === shownStep ? ' now' : '');
+      cell.style.setProperty('--cat', cat);
+      cell.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        if (e.button === 2) return;
+        setStep(id, i, NEXT[seq.lanes[id][i]]);
+      });
+      cell.addEventListener('contextmenu', (e) => { e.preventDefault(); setStep(id, i, '.'); });
+      cells[i].push(cell);
+      grid.append(cell);
+    }
+  }
+}
+
+function setStep(id, i, v) {
+  const row = seq.lanes[id];
+  seq.lanes[id] = row.slice(0, i) + v + row.slice(i + 1);
+  seq.edited = true;
+  saveSeq();
+  renderTransport();
+  renderGrid();
+  // Audition when stopped, so you can hear what you're placing
+  if (!playing && v !== '.' && kit && map[laneKeys[id]]) { play(map[laneKeys[id]], LEVEL[v]); flash(laneKeys[id]); }
+}
+
+function loadPreset(name) {
+  seq = fromPreset(PRESETS.find((p) => p.name === name));
+  saveSeq();
+  renderTransport();
+  renderGrid();
+}
+
+// Timing: a worker ticks every 25 ms (keeps running in background tabs);
+// each tick schedules any steps falling in the next 120 ms on the audio clock.
+const clock = new Worker(URL.createObjectURL(new Blob(
+  ['let t; onmessage = (e) => { clearInterval(t); if (e.data) t = setInterval(() => postMessage(0), 25); };'],
+  { type: 'text/javascript' })));
+clock.onmessage = tick;
+
+function tick() {
+  const stepDur = 60 / seq.bpm / 4;
+  if (nextTime < ctx.currentTime - 0.05) nextTime = ctx.currentTime + 0.01; // fell behind: don't burst-play
+  while (nextTime < ctx.currentTime + 0.12) {
+    const swing = step % 2 ? (seq.swing - 50) / 50 * stepDur : 0;
+    scheduleStep(step, nextTime + swing);
+    nextTime += stepDur;
+    step = (step + 1) % STEPS;
+  }
+}
+
+function scheduleStep(i, t) {
+  const hits = [];
+  for (const [id] of LANES) {
+    const level = LEVEL[seq.lanes[id][i]];
+    const code = laneKeys[id], file = map[code];
+    if (!level || !file) continue;
+    const url = urlFor(kit, file);
+    const buf = ready.get(url);
+    if (!buf) { load(url).catch(() => {}); continue; } // still downloading: skip this hit
+    voice(buf, catOf(kit, file), level, t);
+    hits.push(code);
+  }
+  drawQueue.push({ i, t, hits });
+}
+
+function draw() {
+  if (!playing) return;
+  while (drawQueue.length && drawQueue[0].t <= ctx.currentTime) {
+    const { i, hits } = drawQueue.shift();
+    for (const c of cells[shownStep] || []) c.classList.remove('now');
+    for (const c of cells[i]) c.classList.add('now');
+    shownStep = i;
+    hits.forEach(flash);
+  }
+  requestAnimationFrame(draw);
+}
+
+function togglePlay() {
+  audio();
+  playing = !playing;
+  if (playing) {
+    step = 0;
+    nextTime = ctx.currentTime + 0.06;
+    drawQueue.length = 0;
+    clock.postMessage(true);
+    requestAnimationFrame(draw);
+  } else {
+    clock.postMessage(false);
+    for (const c of cells[shownStep] || []) c.classList.remove('now');
+    shownStep = -1;
+  }
+  renderTransport();
+}
+
+$('play').onclick = (e) => { e.currentTarget.blur(); togglePlay(); };
+$('pattern').onchange = (e) => { if (e.target.value) loadPreset(e.target.value); e.target.blur(); };
+$('bpm').onchange = (e) => {
+  seq.bpm = Math.min(260, Math.max(40, Math.round(+e.target.value) || seq.bpm));
+  seq.edited = true; saveSeq(); renderTransport(); e.target.blur();
+};
+$('bpm').onkeydown = (e) => { if (e.key === 'Enter' || e.key === 'Escape') e.target.blur(); };
+$('swing').oninput = (e) => { seq.swing = +e.target.value; seq.edited = true; saveSeq(); $('swingVal').textContent = seq.swing + '%'; };
+$('swing').onchange = (e) => { renderTransport(); e.target.blur(); };
+$('clear').onclick = (e) => {
+  for (const [id] of LANES) seq.lanes[id] = '.'.repeat(STEPS);
+  seq.edited = true; saveSeq(); renderTransport(); renderGrid(); e.currentTarget.blur();
+};
+
+// ---------- input ----------
+let lastHit = null;
+const slotCodes = new Set(SLOTS.map((s) => s[0]));
+document.addEventListener('keydown', (e) => {
+  if (e.target === $('search')) {
+    if (e.key === 'Escape') e.target.blur();
+    if (e.key === 'Enter') { const first = kits.find((k) => k.li?.isConnected); if (first) setKit(first); e.target.blur(); }
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey || e.target.tagName === 'SELECT' ||
+      e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+  if (e.code === 'Space') { e.preventDefault(); document.activeElement.blur(); if (!e.repeat) togglePlay(); return; }
+  if (binding) {
+    e.preventDefault();
+    if (slotCodes.has(e.code)) { laneKeys[binding] = e.code; store.set('laneKeys', laneKeys); trigger(e.code, false); }
+    if (slotCodes.has(e.code) || e.code === 'Escape') { binding = null; renderGrid(); }
+    return;
+  }
+  if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') { e.preventDefault(); stepKit(e.code === 'ArrowLeft' ? -1 : 1); return; }
+  if (e.code === 'BracketLeft' || e.code === 'BracketRight') { e.preventDefault(); cycle(e.code === 'BracketLeft' ? -1 : 1); return; }
+  if (e.code === 'Escape' && selected) { select(selected); return; }
+  if (e.code === 'Slash') { e.preventDefault(); $('search').focus(); return; }
+  if (!slotCodes.has(e.code)) return;
+  e.preventDefault();
+  if (e.repeat) return;
+  lastHit = e.code;
+  trigger(e.code, e.shiftKey);
+});
+
+$('search').addEventListener('input', renderKitList);
+$('vol').addEventListener('input', (e) => { if (master) master.gain.value = +e.target.value; store.set('vol', +e.target.value); });
+$('vol').addEventListener('change', (e) => e.target.blur());
+$('reset').onclick = () => { if (!kit) return; store.set('map.' + kit.name, null); setKit(kit); };
+
+// ---------- start ----------
+buildBoard();
+renderTransport();
+renderGrid();
+const vol = store.get('vol');
+if (vol != null) $('vol').value = vol;
+fetch('kits.json').then((r) => r.json()).then((data) => {
+  kits = data;
+  renderKitList();
+  setKit(kits.find((k) => k.name === store.get('kit')) || kits.find((k) => k.name === 'Roland TR808') || kits[0]);
+}).catch(() => { $('kitName').textContent = 'Couldn’t load kits.json — serve this folder over http'; });
+</script>
+</body>
+</html>
